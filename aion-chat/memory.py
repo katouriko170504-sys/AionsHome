@@ -117,7 +117,8 @@ async def get_embedding(text: str) -> list[float] | None:
                 resp = await client.post(url, json=body)
                 resp.raise_for_status()
                 return resp.json()["embedding"]["values"]
-        except Exception:
+        except Exception as e:
+            print(f"[Embedding] Gemini 调用异常: {e}")
             return None
 
 
@@ -580,12 +581,13 @@ async def _call_flash_lite(prompt: str) -> dict | None:
 
 def _parse_json_response(raw: str) -> dict | None:
     """从模型输出中提取 JSON 对象"""
+    import re as _re
     raw = raw.strip()
-    if "```" in raw:
-        start = raw.find("{")
-        end = raw.rfind("}") + 1
-        if start >= 0 and end > start:
-            raw = raw[start:end]
+    raw = _re.sub(r'<think>[\s\S]*?</think>', '', raw).strip()
+    start = raw.find("{")
+    end = raw.rfind("}") + 1
+    if start >= 0 and end > start:
+        raw = raw[start:end]
     try:
         return json.loads(raw)
     except (json.JSONDecodeError, ValueError):
@@ -766,6 +768,8 @@ async def _do_digest(min_messages: int = 0) -> dict:
             print(f"[digest] 核心模型调用失败: {e}")
             continue
 
+        print(f"[digest] 模型返回 ({len(raw_text)} 字符): {raw_text[:300]}")
+
         result = _parse_json_response(raw_text)
         if not result:
             print(f"[digest] JSON 解析失败: {raw_text[:200]}")
@@ -779,11 +783,13 @@ async def _do_digest(min_messages: int = 0) -> dict:
             keywords = [k.strip() for k in keywords.replace("、", ",").split(",") if k.strip()]
 
         if not summary or len(summary) < 4:
+            print(f"[digest] 摘要为空或过短，跳过: {repr(summary)}")
             continue
 
         # embedding 向量化
         vec = await get_embedding(summary)
         if not vec:
+            print(f"[digest] embedding 失败，跳过该组")
             continue
 
         # 记录该组消息的时间范围，用于追溯原文
