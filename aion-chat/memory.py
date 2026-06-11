@@ -7,7 +7,7 @@ from datetime import datetime
 
 import aiosqlite, httpx
 
-from config import get_key, get_sentinel_config, get_embedding_config, load_worldbook, save_chat_status, load_digest_anchor, save_digest_anchor, DEFAULT_MODEL
+from config import get_key, get_sentinel_config, get_embedding_config, load_worldbook, save_chat_status, load_digest_anchor, save_digest_anchor, DEFAULT_MODEL, SETTINGS, MODELS
 from database import get_db
 from ws import manager
 
@@ -691,6 +691,10 @@ async def _do_digest(min_messages: int = 0) -> dict:
     user_persona = wb.get("user_persona", "")
 
     model_key, conv_id = await _get_active_model_and_conv()
+
+    digest_model = SETTINGS.get("digest_model", "").strip()
+    if digest_model and digest_model in MODELS:
+        model_key = digest_model
 
     # 构建人设前缀
     persona_block = ""
