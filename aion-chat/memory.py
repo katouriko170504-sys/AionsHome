@@ -1747,6 +1747,7 @@ async def _apply_chatroom_daily_draft(payload: dict) -> dict:
 
 
 async def apply_daily_compression_review(review_id: str) -> dict:
+    return {"ok": False, "message": "记忆压缩应用已暂时关闭，防止误删记忆"}  # 暂时关闭
     await _ensure_daily_compression_schema()
     review = await get_daily_compression_review(review_id)
     if not review:
@@ -1797,7 +1798,7 @@ async def discard_daily_compression_review(review_id: str) -> dict:
 
 async def compress_expired_daily_memories(days: int = 14) -> dict:
     """Compatibility wrapper: create a draft instead of applying immediately."""
-    return await generate_daily_compression_draft(days=days, target="both")
+    return {"ok": True, "message": "记忆压缩已暂时关闭", "candidate_count": 0}  # 暂时关闭
 
 
 async def rebuild_embeddings() -> dict:

@@ -201,6 +201,7 @@ MODELS = {
     "Gemini-3.5-flash":  {"provider": "gemini", "model": "gemini-3.5-flash", "vision": True},
     "Gemini-3.1-pro":  {"provider": "gemini", "model": "gemini-3.1-pro-preview", "vision": True},
     "DS-v4-pro":     {"provider": "aipro", "model": "deepseek-v4-pro", "vision": False},
+    "硅基DS-V4-Pro": {"provider": "siliconflow", "model": "deepseek-ai/DeepSeek-V4-Pro", "vision": False},
     "DS-V4-Flash":     {"provider": "aipro", "model": "deepseek-v4-flash", "vision": False},
     "CLI-3.1pro":       {"provider": "gemini_cli", "model": "gemini-3.1-pro-preview", "vision": True},
     # ChatGPT-auth Codex does not support some Codex-only defaults, so pin a

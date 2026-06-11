@@ -66,6 +66,7 @@ from persona_evolution import main_ai_persona_evolution_loop, connor_persona_evo
 # ── 自动记忆总结定时任务 ──────────────────────────
 async def _auto_digest_loop():
     """每 30 分钟检查一次，若用户已 30 分钟未发消息（Aion 私聊+群聊）则自动总结"""
+    return  # 暂时关闭自动消化，防止后台自动跑消耗API额度
     import aiosqlite, time as _time
     while True:
         await asyncio.sleep(30 * 60)  # 30 分钟

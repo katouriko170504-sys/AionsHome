@@ -1209,6 +1209,7 @@ def connor_1v1_on_message():
 
 async def _connor_1v1_auto_digest_loop():
     """后台循环：每 5 分钟检查一次，若 Connor 相关聊天已 30 分钟无新消息则自动总结"""
+    return  # 暂时关闭Connor自动消化
     global _connor_digest_armed
     while True:
         await asyncio.sleep(5 * 60)
