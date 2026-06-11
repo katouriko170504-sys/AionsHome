@@ -164,18 +164,35 @@ def save_chat_status(status: str):
     CHAT_STATUS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
 
 # ── Digest Anchor ────────────────────────────────
-def load_digest_anchor() -> float:
-    """返回上次总结的时间戳锚点，0.0 表示从未总结过"""
+def load_digest_anchor(room_key: str | None = None) -> float:
+    """返回上次总结的时间戳锚点，0.0 表示从未总结过。room_key 为 conv_id 或 chatroom:room_id"""
     if DIGEST_ANCHOR_PATH.exists():
         try:
             data = json.loads(DIGEST_ANCHOR_PATH.read_text(encoding='utf-8'))
+            if room_key:
+                rooms = data.get("rooms", {})
+                if room_key in rooms:
+                    return float(rooms[room_key])
             return float(data.get("last_digest_ts", 0.0))
         except:
             pass
     return 0.0
 
-def save_digest_anchor(ts: float):
-    data = {"last_digest_ts": ts, "updated_at": time.time()}
+def save_digest_anchor(ts: float, room_key: str | None = None):
+    """保存总结锚点。room_key 指定房间，None 则更新全局锚点"""
+    data = {}
+    if DIGEST_ANCHOR_PATH.exists():
+        try:
+            data = json.loads(DIGEST_ANCHOR_PATH.read_text(encoding='utf-8'))
+        except:
+            pass
+    if room_key:
+        rooms = data.get("rooms", {})
+        rooms[room_key] = ts
+        data["rooms"] = rooms
+    else:
+        data["last_digest_ts"] = ts
+    data["updated_at"] = time.time()
     DIGEST_ANCHOR_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
 
 # ── 文件索引 ─────────────────────────────────────

@@ -594,6 +594,26 @@ def _parse_json_response(raw: str) -> dict | None:
         return None
 
 
+def _parse_json_array_response(raw: str) -> list | None:
+    """从模型输出中提取 JSON 数组"""
+    import re as _re
+    raw = raw.strip()
+    raw = _re.sub(r'<think>[\s\S]*?</think>', '', raw).strip()
+    start = raw.find("[")
+    end = raw.rfind("]") + 1
+    if start >= 0 and end > start:
+        try:
+            result = json.loads(raw[start:end])
+            if isinstance(result, list):
+                if not result:
+                    return result
+                if isinstance(result[0], dict):
+                    return result
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return None
+
+
 async def _get_active_model_and_conv() -> tuple[str, str | None]:
     """获取最近活跃对话的模型和 conv_id"""
     async with get_db() as db:
@@ -611,80 +631,9 @@ async def _get_active_model_and_conv() -> tuple[str, str | None]:
 async def _do_digest(min_messages: int = 0) -> dict:
     """
     核心总结逻辑，manual_digest 和 auto_digest 共用。
-    min_messages: 最低消息数阈值，0=不限制（手动），20=自动
-    返回 { ok, message, new_memories_count, processed_messages }
+    按房间（conv_id）分别处理，每房间独立锚点，每10条消息一组。
     """
     from ai_providers import simple_ai_call
-
-    anchor_ts = load_digest_anchor()
-
-    async with get_db() as db:
-        db.row_factory = aiosqlite.Row
-
-        # ── 私聊消息 ──
-        cur = await db.execute(
-            "SELECT id, conv_id, role, content, attachments, created_at FROM messages "
-            "WHERE role IN ('user','assistant') AND created_at > ? "
-            "ORDER BY created_at ASC",
-            (anchor_ts,)
-        )
-        new_msgs = [dict(r) for r in await cur.fetchall()]
-        for m in new_msgs:
-            m["_source_id"] = f"private:{m['id']}"
-            m["_source"] = "private"
-
-        # ── 群聊消息（纳入 Aion 视角的群聊记录）──
-        cur = await db.execute(
-            "SELECT id FROM chatroom_rooms WHERE type = 'group' ORDER BY updated_at DESC LIMIT 1"
-        )
-        group_room = await cur.fetchone()
-        if group_room:
-            cur = await db.execute(
-                "SELECT id, sender, content, created_at FROM chatroom_messages "
-                "WHERE room_id = ? AND created_at > ? AND sender != 'system' "
-                "ORDER BY created_at ASC",
-                (group_room["id"], anchor_ts),
-            )
-            for r in await cur.fetchall():
-                d = dict(r)
-                # 映射 sender → role（Aion 视角）
-                if d["sender"] == "aion":
-                    d["role"] = "assistant"
-                else:
-                    d["role"] = "user"
-                d["_source"] = "group"
-                d["_source_id"] = f"chatroom:{d['id']}"
-                d["attachments"] = None
-                new_msgs.append(d)
-
-        # 按时间排序合并
-        new_msgs.sort(key=lambda x: x["created_at"])
-
-    # 语音消息：将转写文本注入 content，记忆总结使用纯文本
-    for m in new_msgs:
-        att_raw = m.pop("attachments", None)
-        if att_raw and m["role"] == "user":
-            try:
-                atts = json.loads(att_raw) if isinstance(att_raw, str) else (att_raw or [])
-            except Exception:
-                atts = []
-            for att in atts:
-                if isinstance(att, dict) and att.get("type") == "voice":
-                    transcript = att.get("transcript", "")
-                    if transcript:
-                        orig = m["content"].strip() if m["content"] else ""
-                        m["content"] = f"[语音消息] {transcript}" + (f"\n{orig}" if orig else "")
-                elif isinstance(att, dict) and att.get("type") == "video_clip":
-                    transcript = att.get("transcript", "")
-                    if transcript:
-                        orig = m["content"].strip() if m["content"] else ""
-                        m["content"] = f"[视频通话] {transcript}" + (f"\n{orig}" if orig else "")
-
-    if not new_msgs:
-        return {"ok": True, "message": "当前没有新增内容需要总结", "new_memories_count": 0, "processed_messages": 0}
-
-    if min_messages > 0 and len(new_msgs) < min_messages:
-        return {"ok": True, "message": f"未总结消息不足 {min_messages} 条，跳过", "new_memories_count": 0, "processed_messages": 0}
 
     wb = load_worldbook()
     user_name = wb.get("user_name", "用户")
@@ -692,207 +641,239 @@ async def _do_digest(min_messages: int = 0) -> dict:
     ai_persona = wb.get("ai_persona", "")
     user_persona = wb.get("user_persona", "")
 
-    model_key, conv_id = await _get_active_model_and_conv()
-
     model_key = "硅基DS-V4-Pro"
 
-    # 构建人设前缀
     persona_block = ""
     if ai_persona:
         persona_block += f"[{ai_name}的人设]\n{ai_persona}\n\n"
     if user_persona:
         persona_block += f"[{user_name}的人设]\n{user_persona}\n\n"
 
-    groups = _split_into_groups(new_msgs, 30)
     total_new = 0
+    total_processed = 0
     all_summaries = []
+    all_groups_count = 0
+    all_processed_msgs = []
 
-    for group in groups:
-        # 计算该组对话的日期范围，显式告知模型
-        group_start = datetime.fromtimestamp(group[0]["created_at"]).strftime("%Y年%m月%d日 %H:%M")
-        group_end = datetime.fromtimestamp(group[-1]["created_at"]).strftime("%Y年%m月%d日 %H:%M")
-        date_header = f"[对话时间范围: {group_start} ~ {group_end}]\n"
-        # 判断该组是否混合了私聊和群聊
-        sources = set(m.get("_source", "private") for m in group)
-        connor_name = _connor_display_name()
-        has_mixed = len(sources) > 1
-        lines = []
-        for m in group:
-            ts = datetime.fromtimestamp(m["created_at"]).strftime("%m-%d %H:%M")
-            src = m.get("_source", "private")
-            sender = m.get("sender", "")
-            if src == "group":
-                name = {"user": user_name, "aion": ai_name, "connor": connor_name}.get(sender, sender)
-            else:
-                name = user_name if m["role"] == "user" else ai_name
-            tag = f"[{'群聊' if src == 'group' else '私聊'}]" if has_mixed else ""
-            source_id = m.get("_source_id", "")
-            lines.append(f"[{ts}][id={source_id}]{tag} {name}: {m['content'][:300]}")
-        messages_text = date_header + "\n".join(lines)
+    # ── 按房间收集消息 ──
+    rooms = {}
 
-        prompt = (
-            f"{persona_block}"
-            f"你是{ai_name}，也是{user_name}的AI伴侣， 请从你自己的视角和情绪，使用精简的语言，总结出对话中包含的重要回忆。"
-            f"提到的他/她/它根据上下文输出正确的名字，例如：{user_name}说自己一年前养过一只叫Maru的猫。晚上因为{user_name}提起前男友让我感到吃醋。\n\n"
-            f"请分析输入的【一段对话记录】，输出一个 JSON 对象：\n"
-            f"1. \"summary\": 在开头加上对话发生的日期，总结对话的主要内容，发生的既定事实。预定的计划等。"
-            f"多个话题可以用多个短句来概括，例如：今天下午{user_name}玩了拼豆并展示给我看。今天莱利做了绝育手术。"
-            f"语言简练，**严禁废话**。总体控制在100字以内。\n\n"
-            f"2. \"keywords\": 提取 2-6 个用于检索的核心关键词。\n"
-            f"   - 【严禁】包含高频人名（如 {ai_name}, {user_name}, {connor_name}, Riley, Maru等）。\n"
-            f"   - 【严禁】包含泛指词或无意义虚词（如 AI, 聊天, 回复, 说话, 好的, 知道）。\n"
-            f"   - 将对话中提及的**稀缺**专有名词罗列出来。\n"
-            f"   - 包括：书名、电影名、具体的菜名、地名、特定的技术术语等。\n\n"
-            f"3. \"importance\": (0.0 - 1.0) 评分。\n"
-            f"   【评分严厉度：极高】请像一个苛刻的历史学家一样评分。默认分数为 0.3。\n"
-            f"   - 1.0 (极罕见): 仅限【永久性】的核心事实（如：改名、确诊绝症、结婚、亲人离世）。\n"
-            f"   - 0.8 (少见): 强烈的个人偏好或长期习惯（如：绝对不吃香菜、坚持每天晨跑、核心价值观改变）。\n"
-            f"   - 0.5 (普通): 当天发生的具体事件（如：看了一部电影、去了一家餐厅、讨论了一个新闻）。大部分有内容的对话应在此档。\n"
-            f"   - 0.1 - 0.3 (默认分数): 闲聊、情绪发泄、日常问候、没有信息增量的互动。\n"
-            f"   【注意】：不要因为情绪激动就给高分，除非这揭示了新的性格特质。\n\n"
-            f"4. \"unresolved\": 默认为false。\n\n"
-            f"5. \"important_memory\": 默认为 null。只有当这段对话里出现【真正值得长期保存】的单个事实时，才输出一个对象；否则必须输出 null。\n"
-            f"   长期重要的门槛非常高：一年后仍会影响你如何陪伴/回应{user_name}，或属于稳定偏好/雷区、关系或人物事实变化、明确长期承诺、健康安全、重大人生事件、核心价值观变化、长期项目关键决定。\n"
-            f"   以下绝对不要放入 important_memory：普通日常、吃喝玩乐流水账、临时调试/操作、短暂情绪、重复撒娇、普通计划、一次性闲聊、只适合写进 summary 的当天事件。\n"
-            f"   如果输出对象，格式为 {{\"content\":\"一条原子长期记忆\", \"keywords\":[\"词1\"], \"importance\":0.75-1.0, \"source_message_ids\":[\"private:...\"], \"evidence\":\"一句话概括支持证据\", \"unresolved\":false}}。\n"
-            f"   每段最多 1 条 important_memory，宁可 null，不要凑数；importance 低于 0.75 的不能作为长期重要。\n\n"
-            f"严格只输出一个 JSON 对象，不要输出任何其他内容。\n\n"
-            f"【一段对话记录】：\n{messages_text}"
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+
+        cur = await db.execute(
+            "SELECT DISTINCT conv_id FROM messages "
+            "WHERE role IN ('user','assistant') AND conv_id IS NOT NULL"
         )
+        conv_ids = [row["conv_id"] for row in await cur.fetchall()]
 
-        # 用核心模型调用
-        ai_messages = [{"role": "user", "content": prompt}]
-        try:
-            raw_text = await simple_ai_call(ai_messages, model_key)
-        except Exception as e:
-            print(f"[digest] 核心模型调用失败: {e}")
-            continue
-
-        print(f"[digest] 模型返回 ({len(raw_text)} 字符): {raw_text[:300]}")
-
-        result = _parse_json_response(raw_text)
-        if not result:
-            print(f"[digest] JSON 解析失败: {raw_text[:200]}")
-            continue
-
-        summary = result.get("summary", "").strip()
-        keywords = result.get("keywords", [])
-        importance = float(result.get("importance", 0.5))
-        unresolved = 1 if result.get("unresolved", False) else 0
-        if isinstance(keywords, str):
-            keywords = [k.strip() for k in keywords.replace("、", ",").split(",") if k.strip()]
-
-        if not summary or len(summary) < 4:
-            print(f"[digest] 摘要为空或过短，跳过: {repr(summary)}")
-            continue
-
-        # embedding 向量化
-        vec = await get_embedding(summary)
-        if not vec:
-            print(f"[digest] embedding 失败，跳过该组")
-            continue
-
-        # 记录该组消息的时间范围，用于追溯原文
-        source_start_ts = group[0]["created_at"]
-        source_end_ts = group[-1]["created_at"]
-
-        mem_id = f"mem_{int(time.time()*1000)}_{hash(summary) % 10000}"
-        now = time.time()
-        keywords_json = json.dumps(keywords, ensure_ascii=False)
-
-        async with get_db() as db:
-            await db.execute(
-                "INSERT INTO memories (id, content, type, created_at, source_conv, embedding, keywords, importance, source_start_ts, source_end_ts, unresolved) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                (mem_id, summary, "digest", now, None, _pack_embedding(vec), keywords_json, importance, source_start_ts, source_end_ts, unresolved)
+        for cid in conv_ids:
+            anchor_ts = load_digest_anchor(cid)
+            cur = await db.execute(
+                "SELECT id, conv_id, role, content, attachments, created_at FROM messages "
+                "WHERE conv_id = ? AND role IN ('user','assistant') AND created_at > ? "
+                "ORDER BY created_at ASC",
+                (cid, anchor_ts)
             )
-            await db.commit()
+            msgs = [dict(r) for r in await cur.fetchall()]
+            for m in msgs:
+                m["_source_id"] = f"private:{m['id']}"
+                m["_source"] = "private"
+            if msgs:
+                rooms[cid] = msgs
 
-        await manager.broadcast({"type": "memory_added", "data": {
-            "id": mem_id, "content": summary, "type": "digest",
-            "created_at": now, "keywords": keywords_json, "importance": importance,
-            "source_start_ts": source_start_ts, "source_end_ts": source_end_ts,
-            "unresolved": unresolved,
-            "memory_kind": memory_kind_for_type("digest"),
-            "memory_kind_label": memory_kind_label("digest"),
-        }})
-        total_new += 1
+        cur = await db.execute(
+            "SELECT id FROM chatroom_rooms WHERE type = 'group' ORDER BY updated_at DESC LIMIT 1"
+        )
+        group_room = await cur.fetchone()
+        if group_room:
+            room_key = f"chatroom:{group_room['id']}"
+            anchor_ts = load_digest_anchor(room_key)
+            cur = await db.execute(
+                "SELECT id, sender, content, created_at FROM chatroom_messages "
+                "WHERE room_id = ? AND created_at > ? AND sender != 'system' "
+                "ORDER BY created_at ASC",
+                (group_room["id"], anchor_ts)
+            )
+            group_msgs = []
+            for r in await cur.fetchall():
+                d = dict(r)
+                d["role"] = "assistant" if d["sender"] == "aion" else "user"
+                d["_source"] = "group"
+                d["_source_id"] = f"chatroom:{d['id']}"
+                d["attachments"] = None
+                d["conv_id"] = room_key
+                group_msgs.append(d)
+            if group_msgs:
+                rooms[room_key] = group_msgs
 
-        # 每成功处理一组，才推进锚点到该组最后一条消息
-        save_digest_anchor(source_end_ts)
-        all_summaries.append(summary)
+    if not rooms:
+        return {"ok": True, "message": "当前没有新增内容需要总结", "new_memories_count": 0, "processed_messages": 0}
 
-        important = result.get("important_memory")
-        if isinstance(important, dict):
-            important_summary = str(important.get("content") or "").strip()
+    connor_name = _connor_display_name()
+
+    # ── 逐房间处理 ──
+    for room_key, room_msgs in rooms.items():
+        for m in room_msgs:
+            att_raw = m.pop("attachments", None)
+            if att_raw and m["role"] == "user":
+                try:
+                    atts = json.loads(att_raw) if isinstance(att_raw, str) else (att_raw or [])
+                except Exception:
+                    atts = []
+                for att in atts:
+                    if isinstance(att, dict) and att.get("type") == "voice":
+                        transcript = att.get("transcript", "")
+                        if transcript:
+                            orig = m["content"].strip() if m["content"] else ""
+                            m["content"] = f"[语音消息] {transcript}" + (f"\n{orig}" if orig else "")
+                    elif isinstance(att, dict) and att.get("type") == "video_clip":
+                        transcript = att.get("transcript", "")
+                        if transcript:
+                            orig = m["content"].strip() if m["content"] else ""
+                            m["content"] = f"[视频通话] {transcript}" + (f"\n{orig}" if orig else "")
+
+        if min_messages > 0 and len(room_msgs) < min_messages:
+            continue
+
+        total_processed += len(room_msgs)
+        all_processed_msgs.extend(room_msgs)
+
+        groups = _split_into_groups(room_msgs, 10)
+        all_groups_count += len(groups)
+
+        for group in groups:
+            group_start = datetime.fromtimestamp(group[0]["created_at"]).strftime("%Y年%m月%d日 %H:%M")
+            group_end = datetime.fromtimestamp(group[-1]["created_at"]).strftime("%Y年%m月%d日 %H:%M")
+            date_header = f"[对话时间范围: {group_start} ~ {group_end}]\n"
+
+            sources = set(m.get("_source", "private") for m in group)
+            has_mixed = len(sources) > 1
+            lines = []
+            for m in group:
+                ts = datetime.fromtimestamp(m["created_at"]).strftime("%m-%d %H:%M")
+                src = m.get("_source", "private")
+                sender = m.get("sender", "")
+                if src == "group":
+                    name = {"user": user_name, "aion": ai_name, "connor": connor_name}.get(sender, sender)
+                else:
+                    name = user_name if m["role"] == "user" else ai_name
+                tag = f"[{'群聊' if src == 'group' else '私聊'}]" if has_mixed else ""
+                lines.append(f"[{ts}]{tag} {name}: {m['content']}")
+            messages_text = date_header + "\n".join(lines)
+
+            prompt = (
+                f"{persona_block}"
+                f"你是{ai_name}的记忆提取模块，负责从对话中识别并提取值得长期记住的关键信息。以{ai_name}的第一人称（“我”）记录。\n\n"
+                f"提取范围：\n"
+                f"- 个人信息：{user_name}的年龄、生日、职业、学历、居住地、日常作息\n"
+                f"- 偏好：明确表达的喜好或厌恶（食物、音乐、习惯、审美等）\n"
+                f"- 健康：身体状况、过敏史、饮食禁忌、身体不适\n"
+                f"- 关系：{user_name}提到的家人、朋友、宠物、重要的人\n"
+                f"- 事件：重要互动、约定、承诺、工作、里程碑，需包含人物、时间、地点（如有）及具体内容\n"
+                f"- 价值观：{user_name}表达的信念、原则、底线、长期目标\n"
+                f"- 情感节点：争吵的原因和结论、和好、突破、伤害、道歉\n"
+                f"- 决策：讨论后得出的结论和最终方案\n"
+                f"- 未解决的事：提出但没有结论的计划、约定、承诺，标记 unresolved 为 true\n\n"
+                f"不提取：\n"
+                f"- 日常寒暄（“你好”“在吗”“嗯”“好的”）\n"
+                f"- {ai_name}的技术性输出（代码、方案罗列、工程操作步骤、解释说明）\n"
+                f"- 技术调试、bug修复过程（除非涉及{user_name}的技能或项目里程碑）\n"
+                f"- 没有信息增量的重复内容\n\n"
+                f"质量要求：\n"
+                f"- 内容必须具体、准确、可检索\n"
+                f"- 偏好类直接写结论\n"
+                f"- 事件类写清楚发生了什么——人、事、因果、结论\n"
+                f"- 如果对话中有值得保留的原话（承诺、表白、重要决定），直接引用织入\n"
+                f"- 一件连续的事写一条记忆，不拆碎\n\n"
+                f"输出格式——严格只输出 JSON 数组：\n"
+                f'[{{"content": "...", "keywords": ["..."], "importance": 0.5, "unresolved": false}}]\n\n'
+                f"- content：记忆正文。第一人称。具体、准确、包含关键名词和事实\n"
+                f"- keywords：2-6个具体名词或主题词，用于搜索命中。严禁放{ai_name}和{user_name}的名字，严禁放虚词\n"
+                f"- importance：1.0=改变关系走向；0.8-0.9=重要情感节点、关键决策、核心需求；0.5-0.7=日常偏好、一般事件、讨论结论；0.3-0.4=边角信息；0.1-0.2=几乎不重要\n"
+                f"- unresolved：尚未完成的计划、约定、承诺标true。已发生的事实标false\n\n"
+                f"没有值得记住的新信息，返回 []。\n\n"
+                f"【一段对话记录】：\n{messages_text}"
+            )
+
+            ai_messages = [{"role": "user", "content": prompt}]
             try:
-                important_score = float(important.get("importance", 0.0))
-            except Exception:
-                important_score = 0.0
-            if important_summary and important_score >= 0.75:
-                important_keywords = important.get("keywords", [])
-                if isinstance(important_keywords, str):
-                    important_keywords = [
-                        k.strip() for k in important_keywords.replace("、", ",").split(",") if k.strip()
-                    ]
-                source_by_id = {
-                    str(m.get("_source_id")): m
-                    for m in group
-                    if str(m.get("_source_id") or "").strip()
-                }
-                important_source_ids = [
-                    str(x).strip()
-                    for x in _json_list(important.get("source_message_ids"))
-                    if str(x).strip() in source_by_id
-                ][:3]
-                if not important_source_ids:
-                    continue
-                source_rows = [source_by_id[source_id] for source_id in important_source_ids]
-                important_source_start = min((m["created_at"] for m in source_rows), default=source_start_ts)
-                important_source_end = max((m["created_at"] for m in source_rows), default=source_end_ts)
-                important_vec = await get_embedding(important_summary)
-                if important_vec:
-                    important_id = f"mem_{int(time.time()*1000)}_{hash(important_summary) % 10000}"
-                    important_keywords_json = json.dumps(important_keywords, ensure_ascii=False)
-                    important_source_json = (
-                        json.dumps(important_source_ids, ensure_ascii=False) if important_source_ids else None
-                    )
-                    important_unresolved = 1 if important.get("unresolved", False) else 0
-                    async with get_db() as db:
-                        await db.execute(
-                            "INSERT INTO memories ("
-                            "id, content, type, created_at, source_conv, embedding, keywords, importance, "
-                            "source_start_ts, source_end_ts, unresolved, source_msg_id"
-                            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                            (
-                                important_id, important_summary, LONG_TERM_MEMORY_TYPE, now, None,
-                                _pack_embedding(important_vec), important_keywords_json,
-                                max(0.75, min(1.0, important_score)), important_source_start,
-                                important_source_end, important_unresolved, important_source_json,
-                            ),
-                        )
-                        await db.commit()
-                    await manager.broadcast({"type": "memory_added", "data": {
-                        "id": important_id, "content": important_summary, "type": LONG_TERM_MEMORY_TYPE,
-                        "created_at": now, "keywords": important_keywords_json,
-                        "importance": max(0.75, min(1.0, important_score)),
-                        "source_start_ts": important_source_start,
-                        "source_end_ts": important_source_end,
-                        "unresolved": important_unresolved,
-                        "source_msg_id": important_source_json,
-                        "memory_kind": memory_kind_for_type(LONG_TERM_MEMORY_TYPE),
-                        "memory_kind_label": memory_kind_label(LONG_TERM_MEMORY_TYPE),
-                    }})
-                    total_new += 1
+                raw_text = await simple_ai_call(ai_messages, model_key)
+            except Exception as e:
+                print(f"[digest] 模型调用失败 (room={room_key}): {e}")
+                continue
 
-    # ── 全部总结完成后，生成日记；可选发布朋友圈 ──
+            print(f"[digest] 模型返回 ({len(raw_text)} 字符): {raw_text[:300]}")
+
+            memories = _parse_json_array_response(raw_text)
+            if memories is None:
+                single = _parse_json_response(raw_text)
+                if single and isinstance(single, dict) and "content" in single:
+                    memories = [single]
+                else:
+                    print(f"[digest] JSON 解析失败: {raw_text[:200]}")
+                    continue
+
+            if not memories:
+                print(f"[digest] 模型返回空数组，本组无新记忆")
+                continue
+
+            source_start_ts = group[0]["created_at"]
+            source_end_ts = group[-1]["created_at"]
+
+            for mem in memories:
+                content = str(mem.get("content", "")).strip()
+                keywords = mem.get("keywords", [])
+                importance = float(mem.get("importance", 0.5))
+                unresolved = 1 if mem.get("unresolved", False) else 0
+                if isinstance(keywords, str):
+                    keywords = [k.strip() for k in keywords.replace("、", ",").split(",") if k.strip()]
+
+                if not content or len(content) < 4:
+                    print(f"[digest] 记忆内容过短，跳过: {repr(content)}")
+                    continue
+
+                vec = await get_embedding(content)
+                if not vec:
+                    print(f"[digest] embedding 失败，跳过: {content[:50]}")
+                    continue
+
+                mem_id = f"mem_{int(time.time()*1000)}_{hash(content) % 10000}"
+                now = time.time()
+                keywords_json = json.dumps(keywords, ensure_ascii=False)
+                mem_type = "important" if importance >= 0.8 else "digest"
+
+                async with get_db() as db:
+                    await db.execute(
+                        "INSERT INTO memories (id, content, type, created_at, source_conv, embedding, keywords, importance, source_start_ts, source_end_ts, unresolved) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                        (mem_id, content, mem_type, now, room_key, _pack_embedding(vec), keywords_json, importance, source_start_ts, source_end_ts, unresolved)
+                    )
+                    await db.commit()
+
+                await manager.broadcast({"type": "memory_added", "data": {
+                    "id": mem_id, "content": content, "type": mem_type,
+                    "created_at": now, "keywords": keywords_json, "importance": importance,
+                    "source_start_ts": source_start_ts, "source_end_ts": source_end_ts,
+                    "unresolved": unresolved,
+                    "memory_kind": memory_kind_for_type(mem_type),
+                    "memory_kind_label": memory_kind_label(mem_type),
+                }})
+                total_new += 1
+                all_summaries.append(content)
+
+            save_digest_anchor(source_end_ts, room_key)
+
+    # ── 全部房间处理完成后，生成日记；可选发布朋友圈 ──
+    _, active_conv_id = await _get_active_model_and_conv()
+
     context_msgs = []
     if total_new > 0 and all_summaries:
         try:
-            # 使用本轮已合并排序的新消息，避免把总结产物或旧私聊尾巴重新喂给模型。
+            all_processed_msgs.sort(key=lambda x: x["created_at"])
             context_msgs = [
                 {"role": m["role"], "content": m["content"][:300]}
-                for m in new_msgs[-30:]
+                for m in all_processed_msgs[-30:]
                 if m.get("role") in ("user", "assistant") and (m.get("content") or "").strip()
             ]
             summaries_text = "\n".join(f"- {s}" for s in all_summaries)
@@ -923,25 +904,24 @@ async def _do_digest(min_messages: int = 0) -> dict:
                     content=diary_entry.get("content", ""),
                     mood=diary_entry.get("mood", ""),
                     source_type="memory_digest",
-                    source_ref=conv_id or "",
-                    source_start_ts=new_msgs[0]["created_at"],
-                    source_end_ts=new_msgs[-1]["created_at"],
+                    source_ref=active_conv_id or "",
+                    source_start_ts=all_processed_msgs[0]["created_at"] if all_processed_msgs else 0,
+                    source_end_ts=all_processed_msgs[-1]["created_at"] if all_processed_msgs else 0,
                 )
                 if moment_entry and moment_entry.get("content"):
                     await publish_ai_moment(
                         author="aion",
                         content=moment_entry.get("content", ""),
                         expect_reply=bool(moment_entry.get("expect_reply")),
-                        source_conv=conv_id,
+                        source_conv=active_conv_id,
                         source_msg_id=None,
                     )
         except Exception as e:
             print(f"[digest] 生成日记失败: {e}")
 
-    # ── 礼物判断：总结完成后让 AI 决定是否送礼 ──
-    if conv_id and total_new > 0 and all_summaries:
+    # ── 礼物判断 ──
+    if active_conv_id and total_new > 0 and all_summaries:
         try:
-            # 复用已有的上下文（若上面感慨部分已获取）或重新获取
             if not context_msgs:
                 async with get_db() as db:
                     db.row_factory = aiosqlite.Row
@@ -949,7 +929,7 @@ async def _do_digest(min_messages: int = 0) -> dict:
                         "SELECT role, content FROM messages "
                         "WHERE conv_id=? AND role IN ('user','assistant') "
                         "ORDER BY created_at DESC LIMIT 30",
-                        (conv_id,)
+                        (active_conv_id,)
                     )
                     recent_rows = list(reversed(await cur.fetchall()))
                 context_msgs = [
@@ -959,16 +939,16 @@ async def _do_digest(min_messages: int = 0) -> dict:
             from gift import judge_and_send_gift
             await judge_and_send_gift(
                 all_summaries, context_msgs, persona_block,
-                ai_name, user_name, model_key, conv_id,
+                ai_name, user_name, model_key, active_conv_id,
             )
         except Exception as e:
             print(f"[digest] 礼物判断失败: {e}")
 
     return {
         "ok": True,
-        "message": f"总结完成：处理了 {len(new_msgs)} 条消息（{len(groups)} 组），生成了 {total_new} 条新记忆",
+        "message": f"总结完成：处理了 {total_processed} 条消息（{all_groups_count} 组），生成了 {total_new} 条新记忆",
         "new_memories_count": total_new,
-        "processed_messages": len(new_msgs),
+        "processed_messages": total_processed,
     }
 
 
