@@ -175,8 +175,42 @@ async def _fetch_source_rows_by_ids(source_ids: list[str], user_name: str, ai_na
     return rows
 
 
+def _is_file_memory() -> bool:
+    try:
+        from file_memory import MEMORY_DIR
+        return MEMORY_DIR.exists()
+    except ImportError:
+        return False
+
+
 @router.get("/api/memories")
 async def list_memories():
+    if _is_file_memory():
+        from file_memory import MEMORY_DIR, get_core_memory_files
+        core_files = set(get_core_memory_files())
+        result = []
+        for f in sorted(MEMORY_DIR.rglob("*.md")):
+            rel = f.relative_to(MEMORY_DIR).as_posix()
+            result.append({
+                "id": rel,
+                "content": f.read_text(encoding="utf-8").strip(),
+                "type": "file",
+                "topic": f.stem,
+                "importance": 1.0 if rel in core_files else 0.5,
+                "created_at": f.stat().st_mtime,
+                "source_type": "file",
+                "source_conv": None,
+                "keywords": "",
+                "source_start_ts": None,
+                "source_end_ts": None,
+                "unresolved": 0,
+                "source_msg_id": None,
+                "memory_kind": "file",
+                "memory_kind_label": "文件",
+                "source_count": 0,
+            })
+        return result
+
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
@@ -216,6 +250,8 @@ async def list_memories():
 
 @router.post("/api/memories")
 async def create_memory(body: MemoryCreate):
+    if _is_file_memory():
+        raise HTTPException(status_code=404, detail="File memory mode — use FILE_WRITE")
     vec = await get_embedding(body.content)
     mem_id = f"mem_{int(time.time() * 1000)}"
     now = time.time()
@@ -243,8 +279,13 @@ async def create_memory(body: MemoryCreate):
     return mem
 
 
-@router.put("/api/memories/{mem_id}")
+@router.put("/api/memories/{mem_id:path}")
 async def update_memory(mem_id: str, body: MemoryUpdate):
+    if _is_file_memory():
+        from file_memory import write_memory_file
+        result = write_memory_file(mem_id, body.content)
+        return {"ok": True, "id": mem_id, "message": result}
+
     vec = await get_embedding(body.content)
     async with get_db() as db:
         fields = ["content=?", "embedding=?"]
@@ -267,16 +308,20 @@ async def update_memory(mem_id: str, body: MemoryUpdate):
     return {"ok": True, "id": mem_id}
 
 
-@router.delete("/api/memories/{mem_id}")
+@router.delete("/api/memories/{mem_id:path}")
 async def delete_memory(mem_id: str):
+    if _is_file_memory():
+        raise HTTPException(status_code=404, detail="File memory mode")
     async with get_db() as db:
         await db.execute("DELETE FROM memories WHERE id=?", (mem_id,))
         await db.commit()
     return {"ok": True}
 
 
-@router.patch("/api/memories/{mem_id}/unresolved")
+@router.patch("/api/memories/{mem_id:path}/unresolved")
 async def toggle_unresolved(mem_id: str):
+    if _is_file_memory():
+        raise HTTPException(status_code=404, detail="File memory mode")
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute("SELECT unresolved FROM memories WHERE id=?", (mem_id,))
@@ -303,11 +348,15 @@ async def get_memories_by_conv(conv_id: str):
 
 @router.post("/api/memories/digest")
 async def trigger_digest():
+    if _is_file_memory():
+        raise HTTPException(status_code=404, detail="File memory mode")
     return await manual_digest()
 
 
 @router.post("/api/memories/compress-daily")
 async def trigger_daily_compression(body: Optional[DailyCompressionRequest] = None):
+    if _is_file_memory():
+        raise HTTPException(status_code=404, detail="File memory mode")
     payload = body or DailyCompressionRequest()
     return await generate_daily_compression_draft(days=payload.days, target=payload.target)
 
@@ -330,6 +379,8 @@ async def discard_daily_compression(review_id: str):
 
 @router.post("/api/memories/rebuild-embeddings")
 async def trigger_rebuild_embeddings():
+    if _is_file_memory():
+        raise HTTPException(status_code=404, detail="File memory mode")
     return await rebuild_embeddings()
 
 
@@ -354,8 +405,10 @@ async def reset_anchor(body: AnchorReset):
         return {"ok": False, "message": "Use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS"}
 
 
-@router.get("/api/memories/{mem_id}/source")
+@router.get("/api/memories/{mem_id:path}/source")
 async def get_memory_source(mem_id: str):
+    if _is_file_memory():
+        raise HTTPException(status_code=404, detail="File memory mode")
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
@@ -444,8 +497,10 @@ async def get_memory_source(mem_id: str):
     }
 
 
-@router.post("/api/memories/{mem_id}/source-selection")
+@router.post("/api/memories/{mem_id:path}/source-selection")
 async def save_memory_source_selection(mem_id: str, body: MemorySourceSelection):
+    if _is_file_memory():
+        raise HTTPException(status_code=404, detail="File memory mode")
     wb = load_worldbook()
     user_name = wb.get("user_name", "User")
     ai_name = wb.get("ai_name", "AI")
