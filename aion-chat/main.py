@@ -139,13 +139,14 @@ async def lifespan(app: FastAPI):
     # 自动记忆总结定时任务
     digest_task = asyncio.create_task(_auto_digest_loop())
     cr_digest_task = asyncio.create_task(_connor_1v1_auto_digest_loop())
-    persona_evolution_task = asyncio.create_task(main_ai_persona_evolution_loop())
-    connor_persona_evolution_task = asyncio.create_task(connor_persona_evolution_loop())
-    idle_autonomy_mgr.start()
+    # ── 以下已禁用：人格进化、自主行动 ──
+    # persona_evolution_task = asyncio.create_task(main_ai_persona_evolution_loop())
+    # connor_persona_evolution_task = asyncio.create_task(connor_persona_evolution_loop())
+    # idle_autonomy_mgr.start()
     yield
-    idle_autonomy_mgr.stop()
-    connor_persona_evolution_task.cancel()
-    persona_evolution_task.cancel()
+    # idle_autonomy_mgr.stop()
+    # connor_persona_evolution_task.cancel()
+    # persona_evolution_task.cancel()
     cr_digest_task.cancel()
     digest_task.cancel()
     fund_scheduler.stop()
