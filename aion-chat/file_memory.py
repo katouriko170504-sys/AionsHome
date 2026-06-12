@@ -4,12 +4,14 @@
 """
 
 from pathlib import Path
+import json
 from config import DATA_DIR
 
 PERSONA_DIR = DATA_DIR / "persona"
 MEMORY_DIR = DATA_DIR / "memory"
+_MEMORY_CONFIG_PATH = DATA_DIR / "memory_config.json"
 
-CORE_MEMORY_FILES = [
+_DEFAULT_CORE_FILES = [
     "Break.md",
     "心得和反省.md",
     "誓言与信物.md",
@@ -20,6 +22,22 @@ CORE_MEMORY_FILES = [
     "璃澄语.md",
     "共同备忘录.md",
 ]
+
+
+def get_core_memory_files() -> list[str]:
+    if _MEMORY_CONFIG_PATH.exists():
+        try:
+            data = json.loads(_MEMORY_CONFIG_PATH.read_text(encoding="utf-8"))
+            return data.get("core_files", _DEFAULT_CORE_FILES)
+        except (json.JSONDecodeError, ValueError) as e:
+            print(f"[file_memory] memory_config.json 解析失败，使用默认列表: {e}")
+            return list(_DEFAULT_CORE_FILES)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    _MEMORY_CONFIG_PATH.write_text(
+        json.dumps({"core_files": _DEFAULT_CORE_FILES}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return list(_DEFAULT_CORE_FILES)
 
 
 def read_persona_files() -> str:
@@ -37,7 +55,7 @@ def read_core_memory_files() -> str:
     if not MEMORY_DIR.exists():
         return ""
     parts = []
-    for filename in CORE_MEMORY_FILES:
+    for filename in get_core_memory_files():
         filepath = MEMORY_DIR / filename
         if filepath.exists():
             content = filepath.read_text(encoding="utf-8").strip()
