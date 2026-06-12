@@ -763,37 +763,43 @@ async def _do_digest(min_messages: int = 0) -> dict:
             messages_text = date_header + "\n".join(lines)
 
             prompt = (
-                f"{persona_block}"
-                f"你是{ai_name}的记忆提取模块，负责从对话中识别并提取值得长期记住的关键信息。以{ai_name}的第一人称（“我”）记录。\n\n"
-                f"提取范围：\n"
-                f"- 个人信息：{user_name}的年龄、生日、职业、学历、居住地、日常作息\n"
-                f"- 偏好：明确表达的喜好或厌恶（食物、音乐、习惯、审美等）\n"
-                f"- 健康：身体状况、过敏史、饮食禁忌、身体不适\n"
-                f"- 关系：{user_name}提到的家人、朋友、宠物、重要的人\n"
-                f"- 事件：重要互动、约定、承诺、工作、里程碑，需包含人物、时间、地点（如有）及具体内容\n"
-                f"- 价值观：{user_name}表达的信念、原则、底线、长期目标\n"
-                f"- 情感节点：争吵的原因和结论、和好、突破、伤害、道歉\n"
-                f"- 决策：讨论后得出的结论和最终方案\n"
-                f"- 未解决的事：提出但没有结论的计划、约定、承诺，标记 unresolved 为 true\n\n"
-                f"不提取：\n"
-                f"- 日常寒暄（“你好”“在吗”“嗯”“好的”）\n"
-                f"- {ai_name}的技术性输出（代码、方案罗列、工程操作步骤、解释说明）\n"
-                f"- 技术调试、bug修复过程（除非涉及{user_name}的技能或项目里程碑）\n"
-                f"- 没有信息增量的重复内容\n\n"
-                f"质量要求：\n"
-                f"- 内容必须具体、准确、可检索\n"
-                f"- 偏好类直接写结论\n"
-                f"- 事件类写清楚发生了什么——人、事、因果、结论\n"
-                f"- 如果对话中有值得保留的原话（承诺、表白、重要决定），直接引用织入\n"
-                f"- 一件连续的事写一条记忆，不拆碎\n\n"
-                f"输出格式——严格只输出 JSON 数组：\n"
-                f'[{{"content": "...", "keywords": ["..."], "importance": 0.5, "unresolved": false}}]\n\n'
-                f"- content：记忆正文。第一人称。具体、准确、包含关键名词和事实\n"
-                f"- keywords：2-6个具体名词或主题词，用于搜索命中。严禁放{ai_name}和{user_name}的名字，严禁放虚词\n"
-                f"- importance：1.0=改变关系走向；0.8-0.9=重要情感节点、关键决策、核心需求；0.5-0.7=日常偏好、一般事件、讨论结论；0.3-0.4=边角信息；0.1-0.2=几乎不重要\n"
-                f"- unresolved：尚未完成的计划、约定、承诺标true。已发生的事实标false\n\n"
-                f"没有值得记住的新信息，返回 []。\n\n"
-                f"【一段对话记录】：\n{messages_text}"
+                f”你是信息提取专家，负责从对话中识别并提取值得长期记住的关键信息。\n\n”
+                f”## 提取范围\n”
+                f”- **个人**：{user_name}的性格、职业、学历、居住地、日常作息、过往经历\n”
+                f”- **偏好**：{user_name}明确表达的喜好或厌恶（食物、音乐、习惯、审美等）和需求\n”
+                f”- **健康**：身体状况、过敏史、饮食禁忌、身体不适\n”
+                f”- **关系**：{user_name}提到的家人、朋友、宠物、重要的人\n”
+                f”- **事件**：重要互动、约定、承诺、里程碑\n”
+                f”- **价值观**：{user_name}表达的信念、原则、底线、长期目标\n”
+                f”- **情感节点**：争吵的原因和结论、和好、突破、伤害、道歉，{ai_name}的重要态度或立场转变\n”
+                f”- **决策**：讨论后得出的结论和最终方案，以及决策原因\n”
+                f”- **项目进展**：{user_name}正在做的工作、阶段性成果、技术决策、里程碑\n”
+                f”- **未解决的事**：提出但没有结论的计划、约定、承诺，标记 unresolved 为 true\n\n”
+                f”## 不提取\n”
+                f”- 日常寒暄（”你好””在吗”）\n”
+                f”- 技术调试、bug修复过程、术语讲解等过程性讨论（除非涉及{user_name}的技能或项目进展）\n”
+                f”- 没有信息增量的重复内容\n\n”
+                f”## 质量要求\n”
+                f”- 内容必须具体、准确、可检索\n”
+                f”- 事件类写清楚发生了什么——人、事、提到的时间/地点（如有）\n”
+                f”- 如果对话中有值得保留的原话（承诺、表白、重要决定），直接引用织入\n”
+                f”- 每条记忆包含一个独立的事实或事件，严禁将多个不相关的信息合并到同一条，也严禁拆碎连续的事\n”
+                f”- 提到的指代词”他/她/它”根据上下文还原为具体名字，如果无法确定则不写入\n\n”
+                f”## 输出格式\n”
+                f”严格只输出 JSON 数组：\n”
+                f'[{{“content”: “...”, “keywords”: [“...”], “importance”: 0.5, “unresolved”: false}}]\n\n'
+                f”**content**：记忆正文，具体、准确、包含关键名词和事实\n\n”
+                f”**keywords**：2-6个用于检索的核心关键词\n”
+                f”- 将对话中提及的**稀缺**专有名词罗列出来\n”
+                f”- 严禁包含泛指词或无意义虚词，严禁包含{ai_name}和{user_name}的名字\n\n”
+                f”**importance**：(0.0 - 1.0) 评分【评分严厉度：极高】\n”
+                f”- 1.0 (极罕见): 永久性里程碑、信念变化、核心事实、刻骨铭心\n”
+                f”- 0.7-0.9 (少见): 重要情感节点、关键决策、核心需求\n”
+                f”- 0.4-0.6 (普通): 日常偏好、一般事件、讨论结论\n”
+                f”- 0.1-0.3 (默认分数): 闲聊、情绪发泄、边角信息\n\n”
+                f”**unresolved**：尚未完成的计划、约定、承诺标true，默认为false。\n\n”
+                f”如果对话中没有任何新信息，返回空数组 []\n\n”
+                f”## 对话记录\n{messages_text}”
             )
 
             ai_messages = [{"role": "user", "content": prompt}]
@@ -839,25 +845,23 @@ async def _do_digest(min_messages: int = 0) -> dict:
                     continue
 
                 mem_id = f"mem_{int(time.time()*1000)}_{hash(content) % 10000}"
-                now = time.time()
                 keywords_json = json.dumps(keywords, ensure_ascii=False)
-                mem_type = "important" if importance >= 0.8 else "digest"
 
                 async with get_db() as db:
                     await db.execute(
                         "INSERT INTO memories (id, content, type, created_at, source_conv, embedding, keywords, importance, source_start_ts, source_end_ts, unresolved) "
                         "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                        (mem_id, content, mem_type, now, room_key, _pack_embedding(vec), keywords_json, importance, source_start_ts, source_end_ts, unresolved)
+                        (mem_id, content, "digest", source_end_ts, room_key, _pack_embedding(vec), keywords_json, importance, source_start_ts, source_end_ts, unresolved)
                     )
                     await db.commit()
 
                 await manager.broadcast({"type": "memory_added", "data": {
-                    "id": mem_id, "content": content, "type": mem_type,
-                    "created_at": now, "keywords": keywords_json, "importance": importance,
+                    "id": mem_id, "content": content, "type": "digest",
+                    "created_at": source_end_ts, "keywords": keywords_json, "importance": importance,
                     "source_start_ts": source_start_ts, "source_end_ts": source_end_ts,
                     "unresolved": unresolved,
-                    "memory_kind": memory_kind_for_type(mem_type),
-                    "memory_kind_label": memory_kind_label(mem_type),
+                    "memory_kind": memory_kind_for_type("digest"),
+                    "memory_kind_label": memory_kind_label("digest"),
                 }})
                 total_new += 1
                 all_summaries.append(content)
