@@ -60,6 +60,8 @@ def read_latest_diary() -> str:
 
 
 def read_memory_file(relative_path: str) -> str:
+    if relative_path.startswith("memory/"):
+        relative_path = relative_path[len("memory/"):]
     filepath = MEMORY_DIR / relative_path
     if not filepath.exists():
         return f"[文件不存在: {relative_path}]"
@@ -71,6 +73,8 @@ def read_memory_file(relative_path: str) -> str:
 
 
 def write_memory_file(relative_path: str, content: str) -> str:
+    if relative_path.startswith("memory/"):
+        relative_path = relative_path[len("memory/"):]
     filepath = MEMORY_DIR / relative_path
     try:
         filepath.resolve().relative_to(MEMORY_DIR.resolve())
@@ -82,6 +86,8 @@ def write_memory_file(relative_path: str, content: str) -> str:
 
 
 def edit_memory_file(relative_path: str, old_text: str, new_text: str) -> str:
+    if relative_path.startswith("memory/"):
+        relative_path = relative_path[len("memory/"):]
     filepath = MEMORY_DIR / relative_path
     if not filepath.exists():
         return f"[文件不存在: {relative_path}]"

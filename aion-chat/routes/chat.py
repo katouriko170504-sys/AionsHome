@@ -1130,6 +1130,13 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
                     _fw_result = write_memory_file(_fw_path.strip(), _fw_content.strip())
                     print(f"[file_write] {_fw_result}")
                 full_text = FILE_WRITE_PATTERN.sub("", full_text).strip()
+            else:
+                _fw_fallback = re.search(r'\[FILE_WRITE:([^\]]+)\]\s*([\s\S]+)$', full_text)
+                if _fw_fallback:
+                    from file_memory import write_memory_file
+                    _fw_result = write_memory_file(_fw_fallback.group(1).strip(), _fw_fallback.group(2).strip())
+                    print(f"[file_write] {_fw_result}")
+                    full_text = full_text[:_fw_fallback.start()].strip()
 
             _fe_matches = FILE_EDIT_PATTERN.findall(full_text)
             if _fe_matches:
@@ -1814,6 +1821,13 @@ async def send_message(conv_id: str, body: MsgCreate):
                     _fw_result = write_memory_file(_fw_path.strip(), _fw_content.strip())
                     print(f"[file_write] {_fw_result}")
                 full_text = FILE_WRITE_PATTERN.sub("", full_text).strip()
+            else:
+                _fw_fallback = re.search(r'\[FILE_WRITE:([^\]]+)\]\s*([\s\S]+)$', full_text)
+                if _fw_fallback:
+                    from file_memory import write_memory_file
+                    _fw_result = write_memory_file(_fw_fallback.group(1).strip(), _fw_fallback.group(2).strip())
+                    print(f"[file_write] {_fw_result}")
+                    full_text = full_text[:_fw_fallback.start()].strip()
 
             _fe_matches = FILE_EDIT_PATTERN.findall(full_text)
             if _fe_matches:
@@ -2769,6 +2783,13 @@ async def regenerate_message(conv_id: str, context_limit: int = 5, whisper_mode:
                     _fw_result = write_memory_file(_fw_path.strip(), _fw_content.strip())
                     print(f"[file_write] {_fw_result}")
                 full_text = FILE_WRITE_PATTERN.sub("", full_text).strip()
+            else:
+                _fw_fallback = re.search(r'\[FILE_WRITE:([^\]]+)\]\s*([\s\S]+)$', full_text)
+                if _fw_fallback:
+                    from file_memory import write_memory_file
+                    _fw_result = write_memory_file(_fw_fallback.group(1).strip(), _fw_fallback.group(2).strip())
+                    print(f"[file_write] {_fw_result}")
+                    full_text = full_text[:_fw_fallback.start()].strip()
 
             _fe_matches = FILE_EDIT_PATTERN.findall(full_text)
             if _fe_matches:
