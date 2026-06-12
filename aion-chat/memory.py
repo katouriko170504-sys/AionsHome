@@ -826,6 +826,7 @@ async def _do_digest(min_messages: int = 0) -> dict:
 
             source_start_ts = group[0]["created_at"]
             source_end_ts = group[-1]["created_at"]
+            group_source_ids = [m.get("_source_id") for m in group if m.get("_source_id")]
 
             for mem in memories:
                 content = str(mem.get("content", "")).strip()
@@ -846,12 +847,13 @@ async def _do_digest(min_messages: int = 0) -> dict:
 
                 mem_id = f"mem_{int(time.time()*1000)}_{hash(content) % 10000}"
                 keywords_json = json.dumps(keywords, ensure_ascii=False)
+                source_msg_id_json = json.dumps(group_source_ids, ensure_ascii=False) if importance >= 0.9 and group_source_ids else None
 
                 async with get_db() as db:
                     await db.execute(
-                        "INSERT INTO memories (id, content, type, created_at, source_conv, embedding, keywords, importance, source_start_ts, source_end_ts, unresolved) "
-                        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                        (mem_id, content, "digest", source_end_ts, room_key, _pack_embedding(vec), keywords_json, importance, source_start_ts, source_end_ts, unresolved)
+                        "INSERT INTO memories (id, content, type, created_at, source_conv, embedding, keywords, importance, source_start_ts, source_end_ts, unresolved, source_msg_id) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (mem_id, content, "digest", source_end_ts, room_key, _pack_embedding(vec), keywords_json, importance, source_start_ts, source_end_ts, unresolved, source_msg_id_json)
                     )
                     await db.commit()
 
