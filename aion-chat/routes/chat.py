@@ -1457,7 +1457,15 @@ async def send_message(conv_id: str, body: MsgCreate):
             history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到，我了解当前的游戏状况了。"})
             inject_offset += 2
 
-    # 2. 即时哨兵 + 记忆召回（fast_mode 时跳过以加快语音聊天响应）
+    # ── 记忆注入方式选择 ──
+    _use_file_memory = False
+    try:
+        from file_memory import PERSONA_DIR, MEMORY_DIR
+        _use_file_memory = PERSONA_DIR.exists() or MEMORY_DIR.exists()
+    except ImportError:
+        pass
+
+    # 2. 即时哨兵 + 记忆召回
     recall_keywords_str = ""
     recalled = []
     detail_text = ""
@@ -1468,7 +1476,29 @@ async def send_message(conv_id: str, body: MsgCreate):
     debug_top6_data = []
     debug_recalled = []
 
-    if body.fast_mode:
+    if _use_file_memory:
+        from file_memory import read_persona_files, read_core_memory_files, read_latest_diary
+        _fm_persona = read_persona_files()
+        if _fm_persona:
+            history.insert(cap_idx + inject_offset, {"role": "user", "content": f"[人格核]\n{_fm_persona}"})
+            history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到。我是澄。"})
+            inject_offset += 2
+        _fm_memory = read_core_memory_files()
+        if _fm_memory:
+            history.insert(cap_idx + inject_offset, {"role": "user", "content": f"[记忆]\n{_fm_memory}"})
+            history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "这些是我的记忆。"})
+            inject_offset += 2
+        _fm_diary = read_latest_diary()
+        if _fm_diary:
+            history.insert(cap_idx + inject_offset, {"role": "user", "content": f"[最近日记]\n{_fm_diary}"})
+            history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到。"})
+            inject_offset += 2
+        _fm_now = datetime.now().strftime("%Y年%m月%d日  %H:%M:%S")
+        _fm_bg = f"系统当前的准确时间是 {_fm_now}"
+        history.insert(cap_idx + inject_offset, {"role": "user", "content": _fm_bg})
+        history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到。"})
+        inject_offset += 2
+    elif body.fast_mode:
         # ── 快速模式：仅注入当前时间，跳过哨兵和记忆 ──
         now_str = datetime.now().strftime("%Y年%m月%d日  %H:%M:%S")
         bg_block = f"系统当前的准确时间是 {now_str}"
@@ -2407,7 +2437,15 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
     history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "好的，需要时我会使用这些指令。"})
     inject_offset += 2
 
-    # 2. 即时哨兵 + 记忆召回（fast_mode 时跳过）
+    # ── 记忆注入方式选择 ──
+    _use_file_memory = False
+    try:
+        from file_memory import PERSONA_DIR, MEMORY_DIR
+        _use_file_memory = PERSONA_DIR.exists() or MEMORY_DIR.exists()
+    except ImportError:
+        pass
+
+    # 2. 即时哨兵 + 记忆召回
     recall_keywords_str = ""
     recalled = []
     detail_text = ""
@@ -2418,7 +2456,29 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
     debug_top6_data = []
     debug_recalled = []
 
-    if fast_mode:
+    if _use_file_memory:
+        from file_memory import read_persona_files, read_core_memory_files, read_latest_diary
+        _fm_persona = read_persona_files()
+        if _fm_persona:
+            history.insert(cap_idx + inject_offset, {"role": "user", "content": f"[人格核]\n{_fm_persona}"})
+            history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到。我是澄。"})
+            inject_offset += 2
+        _fm_memory = read_core_memory_files()
+        if _fm_memory:
+            history.insert(cap_idx + inject_offset, {"role": "user", "content": f"[记忆]\n{_fm_memory}"})
+            history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "这些是我的记忆。"})
+            inject_offset += 2
+        _fm_diary = read_latest_diary()
+        if _fm_diary:
+            history.insert(cap_idx + inject_offset, {"role": "user", "content": f"[最近日记]\n{_fm_diary}"})
+            history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到。"})
+            inject_offset += 2
+        _fm_now = datetime.now().strftime("%Y年%m月%d日  %H:%M:%S")
+        _fm_bg = f"系统当前的准确时间是 {_fm_now}"
+        history.insert(cap_idx + inject_offset, {"role": "user", "content": _fm_bg})
+        history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到。"})
+        inject_offset += 2
+    elif fast_mode:
         # ── 快速模式：仅注入当前时间 ──
         now_str = datetime.now().strftime("%Y年%m月%d日  %H:%M:%S")
         bg_block = f"系统当前的准确时间是 {now_str}"
