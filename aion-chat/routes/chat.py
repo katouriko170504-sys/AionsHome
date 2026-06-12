@@ -459,7 +459,7 @@ class ConvUpdate(BaseModel):
 
 class MsgCreate(BaseModel):
     content: str
-    context_limit: int = 30
+    context_limit: int = 5
     attachments: List[Any] = []
     whisper_mode: bool = False
     fast_mode: bool = False
@@ -479,7 +479,7 @@ class MessageFeedbackUpdate(BaseModel):
 
 class MsgEditResend(BaseModel):
     content: str
-    context_limit: int = 30
+    context_limit: int = 5
     whisper_mode: bool = False
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
@@ -1806,6 +1806,23 @@ async def send_message(conv_id: str, body: MsgCreate):
             # 清洗 AI 回复中模仿产生的 <meta> 标签
             full_text = META_TAG_PATTERN.sub("", full_text).strip()
 
+            # ── 文件记忆伪工具 ──
+            _fw_matches = FILE_WRITE_PATTERN.findall(full_text)
+            if _fw_matches:
+                from file_memory import write_memory_file
+                for _fw_path, _fw_content in _fw_matches:
+                    _fw_result = write_memory_file(_fw_path.strip(), _fw_content.strip())
+                    print(f"[file_write] {_fw_result}")
+                full_text = FILE_WRITE_PATTERN.sub("", full_text).strip()
+
+            _fe_matches = FILE_EDIT_PATTERN.findall(full_text)
+            if _fe_matches:
+                from file_memory import edit_memory_file
+                for _fe_path, _fe_old, _fe_new in _fe_matches:
+                    _fe_result = edit_memory_file(_fe_path.strip(), _fe_old.strip(), _fe_new.strip())
+                    print(f"[file_edit] {_fe_result}")
+                full_text = FILE_EDIT_PATTERN.sub("", full_text).strip()
+
             # 将音乐点歌信息存入 attachments，刷新后可显示胶囊
             music_atts = [{"type": "music", "name": s["name"], "artist": s["artist"], "id": s["id"]} for s in music_cards] if music_cards else []
             full_text, image_atts = _extract_reply_image_attachments(full_text)
@@ -2333,7 +2350,7 @@ async def perform_activity_check(conv_id: str, model_key: str, n: int = 6):
 
 # ── 重新生成 AI 回复 ──────────────────────────────
 @router.post("/api/conversations/{conv_id}/regenerate")
-async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode: bool = False, fast_mode: bool = False, temperature: Optional[float] = None, max_tokens: Optional[int] = None, tts_enabled: bool = False, tts_voice: str = ""):
+async def regenerate_message(conv_id: str, context_limit: int = 5, whisper_mode: bool = False, fast_mode: bool = False, temperature: Optional[float] = None, max_tokens: Optional[int] = None, tts_enabled: bool = False, tts_voice: str = ""):
     async with get_db() as db:
         db.row_factory = __import__('aiosqlite').Row
         cur = await db.execute("SELECT model FROM conversations WHERE id=?", (conv_id,))
@@ -2743,6 +2760,23 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
 
             # 清洗 AI 回复中模仿产生的 <meta> 标签
             full_text = META_TAG_PATTERN.sub("", full_text).strip()
+
+            # ── 文件记忆伪工具 ──
+            _fw_matches = FILE_WRITE_PATTERN.findall(full_text)
+            if _fw_matches:
+                from file_memory import write_memory_file
+                for _fw_path, _fw_content in _fw_matches:
+                    _fw_result = write_memory_file(_fw_path.strip(), _fw_content.strip())
+                    print(f"[file_write] {_fw_result}")
+                full_text = FILE_WRITE_PATTERN.sub("", full_text).strip()
+
+            _fe_matches = FILE_EDIT_PATTERN.findall(full_text)
+            if _fe_matches:
+                from file_memory import edit_memory_file
+                for _fe_path, _fe_old, _fe_new in _fe_matches:
+                    _fe_result = edit_memory_file(_fe_path.strip(), _fe_old.strip(), _fe_new.strip())
+                    print(f"[file_edit] {_fe_result}")
+                full_text = FILE_EDIT_PATTERN.sub("", full_text).strip()
 
             # 将音乐点歌信息存入 attachments，刷新后可显示胶囊
             music_atts = [{"type": "music", "name": s["name"], "artist": s["artist"], "id": s["id"]} for s in music_cards] if music_cards else []
