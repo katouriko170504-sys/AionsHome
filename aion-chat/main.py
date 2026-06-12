@@ -120,26 +120,16 @@ async def lifespan(app: FastAPI):
     # 语音模块初始化
     voice.set_event_loop(loop)
     voice.set_ws_manager(manager)
-    # 日程/闹铃模块初始化
-    schedule_mgr.set_event_loop(loop)
-    schedule_mgr.start()
-    # PC 活动采集
-    pc_tracker.set_event_loop(loop)
-    try:
-        pc_tracker.start()
-    except Exception as e:
-        print(f"[PCActivity] ❌ 启动异常: {e}")
-    try:
-        pc_display_tracker.start()
-    except Exception as e:
-        print(f"[PCDisplay] ❌ 启动异常: {e}")
-    # 基金监控定时任务
-    fund_scheduler.set_event_loop(loop)
-    fund_scheduler.start()
-    # 自动记忆总结定时任务
-    digest_task = asyncio.create_task(_auto_digest_loop())
-    cr_digest_task = asyncio.create_task(_connor_1v1_auto_digest_loop())
-    # ── 以下已禁用：人格进化、自主行动 ──
+    # ── 以下全部禁用：只保留数据库初始化和摄像头/语音基础模块 ──
+    # schedule_mgr.set_event_loop(loop)
+    # schedule_mgr.start()
+    # pc_tracker.set_event_loop(loop)
+    # pc_tracker.start()
+    # pc_display_tracker.start()
+    # fund_scheduler.set_event_loop(loop)
+    # fund_scheduler.start()
+    # digest_task = asyncio.create_task(_auto_digest_loop())
+    # cr_digest_task = asyncio.create_task(_connor_1v1_auto_digest_loop())
     # persona_evolution_task = asyncio.create_task(main_ai_persona_evolution_loop())
     # connor_persona_evolution_task = asyncio.create_task(connor_persona_evolution_loop())
     # idle_autonomy_mgr.start()
@@ -147,12 +137,12 @@ async def lifespan(app: FastAPI):
     # idle_autonomy_mgr.stop()
     # connor_persona_evolution_task.cancel()
     # persona_evolution_task.cancel()
-    cr_digest_task.cancel()
-    digest_task.cancel()
-    fund_scheduler.stop()
-    pc_display_tracker.stop()
-    pc_tracker.stop()
-    schedule_mgr.stop()
+    # cr_digest_task.cancel()
+    # digest_task.cancel()
+    # fund_scheduler.stop()
+    # pc_display_tracker.stop()
+    # pc_tracker.stop()
+    # schedule_mgr.stop()
     voice.stop()
     cam.close_camera()
 
