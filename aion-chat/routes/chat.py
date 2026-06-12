@@ -32,6 +32,8 @@ ACTIVITY_CHECK_PATTERN = re.compile(r'\[查看动态:(\d+)\]')
 SELFIE_CMD_PATTERN = re.compile(r'\[SELFIE:\s*([^\]]+)\]')
 DRAW_CMD_PATTERN = re.compile(r'\[DRAW:\s*([^\]]+)\]')
 TRANSFER_CMD_PATTERN = re.compile(r'\[转账[：:]\s*(-?\d+(?:\.\d+)?)\s*元\]')
+FILE_WRITE_PATTERN = re.compile(r'\[FILE_WRITE:([^\]]+)\](.*?)\[/FILE_WRITE\]', re.DOTALL)
+FILE_EDIT_PATTERN = re.compile(r'\[FILE_EDIT:([^\]]+)\]\s*<<<OLD\s*(.*?)\s*===NEW\s*(.*?)\s*>>>\s*\[/FILE_EDIT\]', re.DOTALL)
 
 # ── 活跃生成任务（用于 abort 取消） ──
 active_generations: dict[str, asyncio.Event] = {}  # conv_id → cancel_event
@@ -863,69 +865,104 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
     history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "好的，需要时我会使用这些指令。"})
     inject_offset += 2
 
-    # RAG 记忆召回
-    recall_keywords_str = ""
-    recalled = []
-    detail_text = ""
-    topic = ""
-    is_search_needed = False
-    recall_query = ""
-    debug_top6 = []
-    debug_top6_data = []
-    debug_recalled = []
+    # ── 记忆注入方式选择 ──
+    _use_file_memory = False
+    try:
+        from file_memory import PERSONA_DIR, MEMORY_DIR
+        _use_file_memory = PERSONA_DIR.exists() or MEMORY_DIR.exists()
+    except ImportError:
+        pass
 
-    digest_result = await instant_digest(actual_recent)
-    recall_keywords = digest_result.get("keywords", [])
-    recall_keywords_str = "、".join(recall_keywords) if recall_keywords else ""
-    topic = digest_result.get("topic", "")
-    is_search_needed = digest_result.get("is_search_needed", False)
+    if _use_file_memory:
+        from file_memory import read_persona_files, read_core_memory_files, read_latest_diary
+        _fm_persona = read_persona_files()
+        if _fm_persona:
+            history.insert(cap_idx + inject_offset, {"role": "user", "content": f"[人格核]\n{_fm_persona}"})
+            history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到。我是澄。"})
+            inject_offset += 2
+        _fm_memory = read_core_memory_files()
+        if _fm_memory:
+            history.insert(cap_idx + inject_offset, {"role": "user", "content": f"[记忆]\n{_fm_memory}"})
+            history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "这些是我的记忆。"})
+            inject_offset += 2
+        _fm_diary = read_latest_diary()
+        if _fm_diary:
+            history.insert(cap_idx + inject_offset, {"role": "user", "content": f"[最近日记]\n{_fm_diary}"})
+            history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到。"})
+            inject_offset += 2
+        _fm_now = datetime.now().strftime("%Y年%m月%d日  %H:%M:%S")
+        _fm_bg = f"系统当前的准确时间是 {_fm_now}"
+        history.insert(cap_idx + inject_offset, {"role": "user", "content": _fm_bg})
+        history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到。"})
+        inject_offset += 2
+        recall_keywords_str = ""
+        debug_recalled = []
+        debug_top6_data = []
 
-    recall_query = f"{topic} {' '.join(recall_keywords)}" if topic else f"{body.content[:200]} {' '.join(recall_keywords)}"
-    recall_query = recall_query.strip()
+    if not _use_file_memory:
+        # RAG 记忆召回（原始逻辑，仅在无文件记忆目录时使用）
+        recall_keywords_str = ""
+        recalled = []
+        detail_text = ""
+        topic = ""
+        is_search_needed = False
+        recall_query = ""
+        debug_top6 = []
+        debug_top6_data = []
+        debug_recalled = []
 
-    async def _do_surfacing():
-        return await build_surfacing_memories(topic, recall_keywords)
-    async def _do_recall():
-        if recall_query:
-            return await recall_memories(recall_query, query_keywords=recall_keywords)
-        return [], []
+        digest_result = await instant_digest(actual_recent)
+        recall_keywords = digest_result.get("keywords", [])
+        recall_keywords_str = "、".join(recall_keywords) if recall_keywords else ""
+        topic = digest_result.get("topic", "")
+        is_search_needed = digest_result.get("is_search_needed", False)
 
-    (surfaced, surfaced_ids), (_, debug_top6) = await asyncio.gather(
-        _do_surfacing(), _do_recall()
-    )
+        recall_query = f"{topic} {' '.join(recall_keywords)}" if topic else f"{body.content[:200]} {' '.join(recall_keywords)}"
+        recall_query = recall_query.strip()
 
-    now_str = datetime.now().strftime("%Y年%m月%d日  %H:%M:%S")
-    bg_block = f"系统当前的准确时间是 {now_str}"
-    health_text = await build_health_summary()
-    if health_text:
-        bg_block += health_text
-    if surfaced:
-        unresolved_lines = [f"📌 {m['content']}（还没做/还没去）" for m in surfaced if m.get("unresolved")]
-        normal_lines = [f"- {m['content']}" for m in surfaced if not m.get("unresolved")]
-        mem_text = "\n".join(unresolved_lines + normal_lines)
-        bg_block += f"\n\n[背景记忆]\n以下是你记得的近期事件和需要关注的事项，在对话中如果有关联可以自然提起：\n{mem_text}"
-    history.insert(cap_idx + inject_offset, {"role": "user", "content": bg_block})
-    history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到，我会在合适的时候自然提及。"})
-    inject_offset += 2
+        async def _do_surfacing():
+            return await build_surfacing_memories(topic, recall_keywords)
+        async def _do_recall():
+            if recall_query:
+                return await recall_memories(recall_query, query_keywords=recall_keywords)
+            return [], []
 
-    if is_search_needed and recall_query:
-        recalled = [r for r in debug_top6 if r["score"] >= 0.45 and r["id"] not in surfaced_ids][:5]
-        if digest_result.get("require_detail") and recalled:
-            detail_text = await fetch_source_details(recalled, recall_keywords)
+        (surfaced, surfaced_ids), (_, debug_top6) = await asyncio.gather(
+            _do_surfacing(), _do_recall()
+        )
 
-    debug_recalled = [{"content": m["content"], "type": m["type"], "score": m["score"],
-                       "vec_sim": m.get("vec_sim"), "kw_score": m.get("kw_score"),
-                       "importance": m.get("importance")} for m in recalled] if recalled else []
-    debug_top6_data = [{"content": m["content"][:100], "score": m["score"],
-                        "vec_sim": m.get("vec_sim"), "kw_score": m.get("kw_score"),
-                        "importance": m.get("importance")} for m in debug_top6] if debug_top6 else []
-    if recalled:
-        mem_lines = "\n".join([f"- {m['content']}" for m in recalled])
-        mem_block = f"[相关记忆]\n你脑海中与当前话题相关的记忆：\n{mem_lines}"
-        if detail_text:
-            mem_block += f"\n\n[原文细节]\n以下是相关的具体对话记录：\n{detail_text}"
-        history.insert(cap_idx + inject_offset, {"role": "user", "content": mem_block})
-        history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到，我会自然地参考这些记忆。"})
+        now_str = datetime.now().strftime("%Y年%m月%d日  %H:%M:%S")
+        bg_block = f"系统当前的准确时间是 {now_str}"
+        health_text = await build_health_summary()
+        if health_text:
+            bg_block += health_text
+        if surfaced:
+            unresolved_lines = [f"📌 {m['content']}（还没做/还没去）" for m in surfaced if m.get("unresolved")]
+            normal_lines = [f"- {m['content']}" for m in surfaced if not m.get("unresolved")]
+            mem_text = "\n".join(unresolved_lines + normal_lines)
+            bg_block += f"\n\n[背景记忆]\n以下是你记得的近期事件和需要关注的事项，在对话中如果有关联可以自然提起：\n{mem_text}"
+        history.insert(cap_idx + inject_offset, {"role": "user", "content": bg_block})
+        history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到，我会在合适的时候自然提及。"})
+        inject_offset += 2
+
+        if is_search_needed and recall_query:
+            recalled = [r for r in debug_top6 if r["score"] >= 0.45 and r["id"] not in surfaced_ids][:5]
+            if digest_result.get("require_detail") and recalled:
+                detail_text = await fetch_source_details(recalled, recall_keywords)
+
+        debug_recalled = [{"content": m["content"], "type": m["type"], "score": m["score"],
+                           "vec_sim": m.get("vec_sim"), "kw_score": m.get("kw_score"),
+                           "importance": m.get("importance")} for m in recalled] if recalled else []
+        debug_top6_data = [{"content": m["content"][:100], "score": m["score"],
+                            "vec_sim": m.get("vec_sim"), "kw_score": m.get("kw_score"),
+                            "importance": m.get("importance")} for m in debug_top6] if debug_top6 else []
+        if recalled:
+            mem_lines = "\n".join([f"- {m['content']}" for m in recalled])
+            mem_block = f"[相关记忆]\n你脑海中与当前话题相关的记忆：\n{mem_lines}"
+            if detail_text:
+                mem_block += f"\n\n[原文细节]\n以下是相关的具体对话记录：\n{detail_text}"
+            history.insert(cap_idx + inject_offset, {"role": "user", "content": mem_block})
+            history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到，我会自然地参考这些记忆。"})
 
     debug_prompt = [{"role": m["role"], "content": m["content"][:500]} for m in history]
 
@@ -1084,6 +1121,23 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
                         await manager.broadcast({"type": "memory_record", "data": mr_data})
 
             full_text = META_TAG_PATTERN.sub("", full_text).strip()
+
+            # ── 文件记忆伪工具 ──
+            _fw_matches = FILE_WRITE_PATTERN.findall(full_text)
+            if _fw_matches:
+                from file_memory import write_memory_file
+                for _fw_path, _fw_content in _fw_matches:
+                    _fw_result = write_memory_file(_fw_path.strip(), _fw_content.strip())
+                    print(f"[file_write] {_fw_result}")
+                full_text = FILE_WRITE_PATTERN.sub("", full_text).strip()
+
+            _fe_matches = FILE_EDIT_PATTERN.findall(full_text)
+            if _fe_matches:
+                from file_memory import edit_memory_file
+                for _fe_path, _fe_old, _fe_new in _fe_matches:
+                    _fe_result = edit_memory_file(_fe_path.strip(), _fe_old.strip(), _fe_new.strip())
+                    print(f"[file_edit] {_fe_result}")
+                full_text = FILE_EDIT_PATTERN.sub("", full_text).strip()
 
             # 检测 [转账：N元] 指令 — AI 转账入账（不从 full_text 中剥离，前端渲染卡片需要）
             transfer_matches = TRANSFER_CMD_PATTERN.findall(full_text)
