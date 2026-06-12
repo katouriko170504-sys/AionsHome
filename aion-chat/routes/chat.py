@@ -34,6 +34,7 @@ DRAW_CMD_PATTERN = re.compile(r'\[DRAW:\s*([^\]]+)\]')
 TRANSFER_CMD_PATTERN = re.compile(r'\[转账[：:]\s*(-?\d+(?:\.\d+)?)\s*元\]')
 FILE_WRITE_PATTERN = re.compile(r'\[FILE_WRITE:([^\]]+)\](.*?)\[/FILE_WRITE\]', re.DOTALL)
 FILE_EDIT_PATTERN = re.compile(r'\[FILE_EDIT:([^\]]+)\]\s*<<<OLD\s*(.*?)\s*===NEW\s*(.*?)\s*>>>\s*\[/FILE_EDIT\]', re.DOTALL)
+FILE_READ_PATTERN = re.compile(r'\[FILE_READ:([^\]]+)\]')
 
 # ── 活跃生成任务（用于 abort 取消） ──
 active_generations: dict[str, asyncio.Event] = {}  # conv_id → cancel_event
@@ -1146,6 +1147,18 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
                     print(f"[file_edit] {_fe_result}")
                 full_text = FILE_EDIT_PATTERN.sub("", full_text).strip()
 
+            _fr_matches = FILE_READ_PATTERN.findall(full_text)
+            if _fr_matches:
+                from file_memory import read_memory_file
+                _fr_results = []
+                for _fr_path in _fr_matches:
+                    _fr_content = read_memory_file(_fr_path.strip())
+                    print(f"[file_read] {_fr_path.strip()}: {len(_fr_content)} chars")
+                    _fr_results.append((_fr_path.strip(), _fr_content))
+                full_text = FILE_READ_PATTERN.sub("", full_text).strip()
+                for _fr_path, _fr_content in _fr_results:
+                    full_text += f"\n\n[已读取 {_fr_path}]\n{_fr_content}"
+
             # 检测 [转账：N元] 指令 — AI 转账入账（不从 full_text 中剥离，前端渲染卡片需要）
             transfer_matches = TRANSFER_CMD_PATTERN.findall(full_text)
             for t_amount_str in transfer_matches:
@@ -1836,6 +1849,18 @@ async def send_message(conv_id: str, body: MsgCreate):
                     _fe_result = edit_memory_file(_fe_path.strip(), _fe_old.strip(), _fe_new.strip())
                     print(f"[file_edit] {_fe_result}")
                 full_text = FILE_EDIT_PATTERN.sub("", full_text).strip()
+
+            _fr_matches = FILE_READ_PATTERN.findall(full_text)
+            if _fr_matches:
+                from file_memory import read_memory_file
+                _fr_results = []
+                for _fr_path in _fr_matches:
+                    _fr_content = read_memory_file(_fr_path.strip())
+                    print(f"[file_read] {_fr_path.strip()}: {len(_fr_content)} chars")
+                    _fr_results.append((_fr_path.strip(), _fr_content))
+                full_text = FILE_READ_PATTERN.sub("", full_text).strip()
+                for _fr_path, _fr_content in _fr_results:
+                    full_text += f"\n\n[已读取 {_fr_path}]\n{_fr_content}"
 
             # 将音乐点歌信息存入 attachments，刷新后可显示胶囊
             music_atts = [{"type": "music", "name": s["name"], "artist": s["artist"], "id": s["id"]} for s in music_cards] if music_cards else []
@@ -2798,6 +2823,18 @@ async def regenerate_message(conv_id: str, context_limit: int = 5, whisper_mode:
                     _fe_result = edit_memory_file(_fe_path.strip(), _fe_old.strip(), _fe_new.strip())
                     print(f"[file_edit] {_fe_result}")
                 full_text = FILE_EDIT_PATTERN.sub("", full_text).strip()
+
+            _fr_matches = FILE_READ_PATTERN.findall(full_text)
+            if _fr_matches:
+                from file_memory import read_memory_file
+                _fr_results = []
+                for _fr_path in _fr_matches:
+                    _fr_content = read_memory_file(_fr_path.strip())
+                    print(f"[file_read] {_fr_path.strip()}: {len(_fr_content)} chars")
+                    _fr_results.append((_fr_path.strip(), _fr_content))
+                full_text = FILE_READ_PATTERN.sub("", full_text).strip()
+                for _fr_path, _fr_content in _fr_results:
+                    full_text += f"\n\n[已读取 {_fr_path}]\n{_fr_content}"
 
             # 将音乐点歌信息存入 attachments，刷新后可显示胶囊
             music_atts = [{"type": "music", "name": s["name"], "artist": s["artist"], "id": s["id"]} for s in music_cards] if music_cards else []
