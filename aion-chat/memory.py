@@ -870,11 +870,8 @@ async def _do_digest(min_messages: int = 0) -> dict:
 
             save_digest_anchor(source_end_ts, room_key)
 
-    # ── 全部房间处理完成后，生成日记；可选发布朋友圈 ──
-    _, active_conv_id = await _get_active_model_and_conv()
-
-    context_msgs = []
-    if total_new > 0 and all_summaries:
+    # ── 日记/朋友圈/礼物 —— 已禁用 ──
+    if False and total_new > 0 and all_summaries:
         try:
             all_processed_msgs.sort(key=lambda x: x["created_at"])
             context_msgs = [
@@ -925,8 +922,8 @@ async def _do_digest(min_messages: int = 0) -> dict:
         except Exception as e:
             print(f"[digest] 生成日记失败: {e}")
 
-    # ── 礼物判断 ──
-    if active_conv_id and total_new > 0 and all_summaries:
+    # ── 礼物判断 —— 已禁用 ──
+    if False and active_conv_id and total_new > 0 and all_summaries:
         try:
             if not context_msgs:
                 async with get_db() as db:
