@@ -114,8 +114,20 @@ def edit_memory_file(relative_path: str, old_text: str, new_text: str) -> str:
     except ValueError:
         return "[路径不合法]"
     content = filepath.read_text(encoding="utf-8")
-    if old_text not in content:
-        return f"[未找到要替换的文本]"
-    content = content.replace(old_text, new_text, 1)
+    if old_text in content:
+        content = content.replace(old_text, new_text, 1)
+    else:
+        old_lines = [l.strip() for l in old_text.strip().splitlines()]
+        content_lines = content.splitlines()
+        match_start = -1
+        for i in range(len(content_lines) - len(old_lines) + 1):
+            if all(content_lines[i + j].strip() == old_lines[j] for j in range(len(old_lines))):
+                match_start = i
+                break
+        if match_start == -1:
+            return f"[未找到要替换的文本: {relative_path}]"
+        new_lines = new_text.strip().splitlines()
+        content_lines[match_start:match_start + len(old_lines)] = new_lines
+        content = "\n".join(content_lines)
     filepath.write_text(content, encoding="utf-8")
     return f"[已编辑: {relative_path}]"
