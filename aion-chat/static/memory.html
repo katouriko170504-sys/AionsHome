@@ -93,6 +93,32 @@
   .mem-add-row select { flex:1; }
   .anchor-row { flex-wrap:nowrap; gap:6px; overflow-x:auto; }
 }
+/* 文件浏览器模式 */
+.file-breadcrumb { display:flex; align-items:center; gap:4px; font-size:13px; color:var(--text2); margin-bottom:8px; flex-wrap:wrap; padding:4px 0; }
+.file-breadcrumb a { color:var(--accent); cursor:pointer; text-decoration:none; }
+.file-breadcrumb a:hover { text-decoration:underline; }
+.file-breadcrumb .sep { color:var(--text3); margin:0 2px; }
+.file-list { border:1px solid var(--border); border-radius:8px; background:var(--bg); overflow:hidden; }
+.file-entry { display:flex; align-items:center; padding:9px 12px; border-bottom:1px solid var(--border); cursor:pointer; font-size:13px; gap:8px; transition:background 0.1s; }
+.file-entry:last-child { border-bottom:none; }
+.file-entry:hover { background:var(--surface2); }
+.file-icon { font-size:15px; flex-shrink:0; width:20px; text-align:center; }
+.file-name { flex:1; color:var(--text); word-break:break-word; }
+.file-meta { font-size:11px; color:var(--text3); white-space:nowrap; }
+.file-viewer { border:1px solid var(--border); border-radius:8px; background:var(--bg); overflow:hidden; }
+.file-viewer-head { display:flex; align-items:center; justify-content:space-between; padding:10px 14px; border-bottom:1px solid var(--border); gap:8px; }
+.file-viewer-title { font-size:14px; font-weight:600; color:var(--text); flex:1; min-width:0; word-break:break-word; }
+.file-viewer-actions { display:flex; gap:6px; flex-shrink:0; }
+.file-viewer-actions button { background:var(--surface2); color:var(--text2); border:1px solid var(--border); border-radius:5px; padding:5px 12px; font-size:12px; cursor:pointer; white-space:nowrap; }
+.file-viewer-actions button.primary { background:var(--accent); color:#fff; border-color:var(--accent); font-weight:600; }
+.file-viewer-content { padding:14px; font-size:13px; line-height:1.7; white-space:pre-wrap; word-break:break-word; color:var(--text); max-height:calc(100dvh - 220px); overflow-y:auto; }
+.file-viewer-edit { width:100%; min-height:60vh; padding:14px; border:none; background:var(--bg); color:var(--text); font-size:13px; line-height:1.6; font-family:inherit; resize:vertical; outline:none; box-sizing:border-box; }
+.file-empty { padding:24px; text-align:center; color:var(--text3); font-size:14px; }
+@media (max-width: 768px) {
+  .file-entry { padding:10px 10px; }
+  .file-viewer-head { flex-direction:column; align-items:flex-start; gap:6px; }
+  .file-viewer-actions { align-self:flex-end; }
+}
 /* 聚焦编辑模式 */
 .editing-focus .mem-search,
 .editing-focus .mem-count,
@@ -115,8 +141,16 @@
     <h2>🧠 记忆库</h2>
   </div>
   <div class="page-content">
-    <input class="mem-search" id="memSearch" type="text" placeholder="🔍 搜索记忆..." oninput="filterMemories()">
+    <input class="mem-search" id="memSearch" type="text" placeholder="🔍 搜索记忆..." oninput="handleSearch()">
     <div class="mem-count" id="memCount"></div>
+    <!-- 文件浏览器模式 -->
+    <div id="fileBrowserUI" style="display:none">
+      <div id="fileBreadcrumb" class="file-breadcrumb"></div>
+      <div id="fileList" class="file-list"></div>
+      <div id="fileViewer" class="file-viewer" style="display:none"></div>
+    </div>
+    <!-- RAG模式 -->
+    <div id="ragUI">
     <div class="mem-list" id="memList"><div class="mem-empty">暂无记忆</div></div>
     <div class="mem-add-row">
       <input type="text" id="memAddInput" placeholder="手动添加一条记忆...">
@@ -142,6 +176,7 @@
       <button class="btn-digest" id="rebuildBtn" onclick="rebuildEmbeddings()" style="background:#1565c0">🔄 重建向量索引</button>
     </div>
     <div class="compress-review" id="compressReview" style="display:none"></div>
+    </div><!-- /ragUI -->
   </div>
 </div>
 
@@ -196,10 +231,20 @@ connectCommonWS(msg => {
   }
 });
 
+let _fileMode = false;
+let _fileEntries = [];
+let _coreFiles = new Set();
+let _currentDir = "";
+let _viewingFilePath = null;
+let _fileEditing = false;
+
 (async function init() {
-  await loadMemories();
-  loadAnchor();
-  loadCompressionDraft();
+  const isFile = await initFileMode();
+  if (!isFile) {
+    await loadMemories();
+    loadAnchor();
+    loadCompressionDraft();
+  }
 })();
 
 async function loadMemories() {
@@ -735,6 +780,214 @@ async function resetAnchor() {
       showToast("✅ 锚点已回退到 " + res.anchor_date);
     } else { alert(res.message || "回退失败"); }
   } catch(e) { alert("回退失败"); }
+}
+
+function handleSearch() {
+  if (_fileMode) filterFiles();
+  else filterMemories();
+}
+
+async function initFileMode() {
+  try {
+    const tree = await api("GET", "/api/memory-tree");
+    if (tree.mode === "file") {
+      _fileMode = true;
+      _fileEntries = tree.entries;
+      _coreFiles = new Set(tree.core_files || []);
+      $("ragUI").style.display = "none";
+      $("fileBrowserUI").style.display = "block";
+      $("memSearch").placeholder = "🔍 搜索文件名...";
+      renderFileList();
+      return true;
+    }
+  } catch(e) {}
+  return false;
+}
+
+function getEntriesInDir(dirPath) {
+  return _fileEntries.filter(e => e.parent === dirPath);
+}
+
+function countFilesInDir(dirPath) {
+  return _fileEntries.filter(e => e.type === "file" && e.parent === dirPath).length;
+}
+
+function renderBreadcrumb() {
+  const el = $("fileBreadcrumb");
+  if (_viewingFilePath) {
+    const parts = _viewingFilePath.split("/");
+    let html = '<a onclick="navigateDir(\'\')">📁 memory</a>';
+    for (let i = 0; i < parts.length - 1; i++) {
+      const dirPath = parts.slice(0, i + 1).join("/");
+      html += `<span class="sep">/</span><a onclick="navigateDir('${escHtml(dirPath)}')">${escHtml(parts[i])}</a>`;
+    }
+    html += `<span class="sep">/</span><span style="font-weight:600">${escHtml(parts[parts.length - 1])}</span>`;
+    el.innerHTML = html;
+    return;
+  }
+  if (!_currentDir) {
+    el.innerHTML = '<span style="font-weight:600">📁 memory</span>';
+    return;
+  }
+  const parts = _currentDir.split("/");
+  let html = '<a onclick="navigateDir(\'\')">📁 memory</a>';
+  parts.forEach((part, i) => {
+    const path = parts.slice(0, i + 1).join("/");
+    html += '<span class="sep">/</span>';
+    if (i === parts.length - 1) {
+      html += `<span style="font-weight:600">${escHtml(part)}</span>`;
+    } else {
+      html += `<a onclick="navigateDir('${escHtml(path)}')">${escHtml(part)}</a>`;
+    }
+  });
+  el.innerHTML = html;
+}
+
+function renderFileList() {
+  const listEl = $("fileList");
+  const viewerEl = $("fileViewer");
+  if (_viewingFilePath) {
+    viewerEl.style.display = "block";
+    listEl.style.display = "none";
+    renderBreadcrumb();
+    return;
+  }
+  viewerEl.style.display = "none";
+  listEl.style.display = "block";
+  renderBreadcrumb();
+  const query = ($("memSearch").value || "").toLowerCase().trim();
+  let entries;
+  if (query) {
+    entries = _fileEntries.filter(e => e.name.toLowerCase().includes(query) || e.path.toLowerCase().includes(query));
+  } else {
+    entries = getEntriesInDir(_currentDir);
+  }
+  entries = entries.slice().sort((a, b) => {
+    if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
+    if (a.type === "file" && a.is_core !== b.is_core) return a.is_core ? -1 : 1;
+    return a.name.localeCompare(b.name, "zh-CN");
+  });
+  const totalFiles = _fileEntries.filter(e => e.type === "file").length;
+  $("memCount").textContent = `共 ${totalFiles} 个文件` + (query ? `，匹配 ${entries.filter(e=>e.type==="file").length} 个` : "");
+  if (!entries.length) {
+    listEl.innerHTML = '<div class="file-empty">' + (query ? "没有匹配的文件" : "空文件夹") + '</div>';
+    return;
+  }
+  listEl.innerHTML = entries.map(e => {
+    if (e.type === "dir") {
+      const cc = countFilesInDir(e.path);
+      return `<div class="file-entry" onclick="navigateDir('${escHtml(e.path)}')">
+        <span class="file-icon">📁</span>
+        <span class="file-name">${escHtml(e.name)}/</span>
+        <span class="file-meta">${cc} 个文件</span>
+      </div>`;
+    }
+    const sizeStr = e.size >= 1024 ? (e.size / 1024).toFixed(1) + ' KB' : e.size + ' B';
+    const icon = e.is_core ? '⚡' : '📄';
+    const dateStr = e.mtime ? new Date(e.mtime * 1000).toLocaleDateString("zh-CN", {month:"2-digit", day:"2-digit"}) : '';
+    const pathHint = (query && e.parent) ? `<span style="font-size:11px;color:var(--text3);margin-left:4px">${escHtml(e.parent)}/</span>` : '';
+    return `<div class="file-entry" onclick="viewFile('${escHtml(e.path)}')">
+      <span class="file-icon">${icon}</span>
+      <span class="file-name">${escHtml(e.name)}${pathHint}</span>
+      <span class="file-meta">${dateStr} · ${sizeStr}</span>
+    </div>`;
+  }).join("");
+}
+
+function navigateDir(path) {
+  _currentDir = path;
+  _viewingFilePath = null;
+  _fileEditing = false;
+  $("memSearch").value = "";
+  renderFileList();
+}
+
+async function viewFile(path) {
+  _viewingFilePath = path;
+  _fileEditing = false;
+  const viewerEl = $("fileViewer");
+  const listEl = $("fileList");
+  listEl.style.display = "none";
+  viewerEl.style.display = "block";
+  const entry = _fileEntries.find(e => e.path === path);
+  const isCore = entry?.is_core || false;
+  const coreLabel = isCore ? ' ⚡' : '';
+  viewerEl.innerHTML = `
+    <div class="file-viewer-head">
+      <div class="file-viewer-title">📄 ${escHtml(entry?.name || path)}${coreLabel}</div>
+      <div class="file-viewer-actions">
+        <button onclick="startEditFile()">✏️ 编辑</button>
+        <button onclick="closeFileViewer()">← 返回</button>
+      </div>
+    </div>
+    <div class="file-viewer-content" id="fileContent">加载中...</div>`;
+  renderBreadcrumb();
+  try {
+    const result = await api("GET", `/api/memory-file/${encodeURIComponent(path).replace(/%2F/g, '/')}`);
+    $("fileContent").textContent = result.content;
+    _fileContentCache = result.content;
+  } catch(e) {
+    $("fileContent").textContent = "加载失败: " + (e.message || "");
+    _fileContentCache = null;
+  }
+}
+
+let _fileContentCache = null;
+
+function startEditFile() {
+  if (!_viewingFilePath || _fileContentCache == null) return;
+  _fileEditing = true;
+  const entry = _fileEntries.find(e => e.path === _viewingFilePath);
+  const isCore = entry?.is_core || false;
+  const coreLabel = isCore ? ' ⚡' : '';
+  const viewerEl = $("fileViewer");
+  viewerEl.innerHTML = `
+    <div class="file-viewer-head">
+      <div class="file-viewer-title">✏️ ${escHtml(entry?.name || _viewingFilePath)}${coreLabel}</div>
+      <div class="file-viewer-actions">
+        <button class="primary" onclick="saveFileEdit()">💾 保存</button>
+        <button onclick="viewFile('${escHtml(_viewingFilePath)}')">取消</button>
+      </div>
+    </div>
+    <textarea class="file-viewer-edit" id="fileEditArea"></textarea>`;
+  const ta = $("fileEditArea");
+  ta.value = _fileContentCache;
+  ta.focus();
+}
+
+async function saveFileEdit() {
+  const ta = $("fileEditArea");
+  if (!ta || !_viewingFilePath) return;
+  const content = ta.value;
+  const saveBtn = document.querySelector(".file-viewer-actions .primary");
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "保存中..."; }
+  try {
+    await api("PUT", `/api/memories/${encodeURIComponent(_viewingFilePath).replace(/%2F/g, '/')}`, { content });
+    const entry = _fileEntries.find(e => e.path === _viewingFilePath);
+    if (entry) {
+      entry.size = new Blob([content]).size;
+      entry.mtime = Date.now() / 1000;
+    }
+    _fileContentCache = content;
+    _fileEditing = false;
+    viewFile(_viewingFilePath);
+  } catch(e) {
+    alert("保存失败: " + (e.message || ""));
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = "💾 保存"; }
+  }
+}
+
+function closeFileViewer() {
+  _viewingFilePath = null;
+  _fileEditing = false;
+  _fileContentCache = null;
+  renderFileList();
+}
+
+function filterFiles() {
+  _viewingFilePath = null;
+  _fileEditing = false;
+  renderFileList();
 }
 </script>
 </body>

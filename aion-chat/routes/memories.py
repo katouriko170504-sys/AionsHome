@@ -183,6 +183,61 @@ def _is_file_memory() -> bool:
         return False
 
 
+@router.get("/api/memory-tree")
+async def memory_tree():
+    if not _is_file_memory():
+        return {"mode": "rag", "entries": []}
+    from file_memory import MEMORY_DIR, get_core_memory_files
+    core_files = set(get_core_memory_files())
+    entries = []
+    dirs_seen = set()
+    for f in sorted(MEMORY_DIR.rglob("*.md")):
+        rel = f.relative_to(MEMORY_DIR)
+        rel_str = rel.as_posix()
+        parent_path = rel.parent
+        parent_str = "" if str(parent_path) == "." else parent_path.as_posix()
+        if parent_str:
+            parts = parent_str.split("/")
+            for i in range(len(parts)):
+                dir_path = "/".join(parts[:i + 1])
+                if dir_path not in dirs_seen:
+                    dirs_seen.add(dir_path)
+                    dir_parent = "/".join(parts[:i]) if i > 0 else ""
+                    entries.append({
+                        "name": parts[i],
+                        "path": dir_path,
+                        "type": "dir",
+                        "parent": dir_parent,
+                    })
+        stat = f.stat()
+        entries.append({
+            "name": f.name,
+            "path": rel_str,
+            "type": "file",
+            "parent": parent_str,
+            "is_core": rel_str in core_files,
+            "size": stat.st_size,
+            "mtime": stat.st_mtime,
+        })
+    return {"mode": "file", "core_files": list(core_files), "entries": entries}
+
+
+@router.get("/api/memory-file/{file_path:path}")
+async def read_memory_file_api(file_path: str):
+    if not _is_file_memory():
+        raise HTTPException(status_code=404, detail="Not in file memory mode")
+    from file_memory import MEMORY_DIR
+    filepath = MEMORY_DIR / file_path
+    try:
+        filepath.resolve().relative_to(MEMORY_DIR.resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    if not filepath.exists() or not filepath.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    content = filepath.read_text(encoding="utf-8")
+    return {"path": file_path, "name": filepath.name, "content": content}
+
+
 @router.get("/api/memories")
 async def list_memories():
     if _is_file_memory():
