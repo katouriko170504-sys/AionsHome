@@ -28,6 +28,8 @@ let hasMoreMessages = false;   // 是否还有更早的消息可加载
 let loadingMore = false;       // 防止重复加载
 let _suppressScrollBottom = false; // 星标跳转时抑制自动滚底
 const MSG_PAGE_SIZE = 50;
+let _thinkingVisible = localStorage.getItem('aion_thinking_visible') === '1';
+let _streamingThinking = {};   // { msgId: "accumulated thinking text" }
 const $ = id => document.getElementById(id);
 
 // ── 收发消息音效 ──
@@ -146,6 +148,37 @@ function formatMsg(s) {
   }
   result += processed.slice(lastIdx).replace(/\n/g, '<br>');
   return result;
+}
+
+function renderThinkingBlock(thinkingText, msgId) {
+  if (!thinkingText) return '';
+  const vis = _thinkingVisible ? '' : ' style="display:none"';
+  return `<details class="msg-thinking" data-thinking-for="${msgId}"${vis}><summary>🧠 思考过程</summary><div class="thinking-body">${escHtml(thinkingText)}</div></details>`;
+}
+
+function toggleThinkingVisible() {
+  _thinkingVisible = !_thinkingVisible;
+  localStorage.setItem('aion_thinking_visible', _thinkingVisible ? '1' : '0');
+  document.querySelectorAll('.msg-thinking').forEach(el => el.style.display = _thinkingVisible ? '' : 'none');
+  const btn = document.getElementById('thinkingToggleBtn');
+  if (btn) { btn.className = 'msg-thinking-toggle' + (_thinkingVisible ? ' active' : ''); btn.innerHTML = _thinkingVisible ? '🧠 思考可见' : '🧠 思考隐藏'; }
+}
+
+function getThinkingFromAttachments(m) {
+  if (!m.attachments) return '';
+  const arr = typeof m.attachments === 'string' ? (() => { try { return JSON.parse(m.attachments); } catch { return []; } })() : m.attachments;
+  const t = arr.find(a => a && typeof a === 'object' && a.type === 'thinking');
+  return t ? (t.content || '') : '';
+}
+
+function ensureThinkingToggle() {
+  if (document.getElementById('thinkingToggleBtn')) return;
+  const btn = document.createElement('button');
+  btn.id = 'thinkingToggleBtn';
+  btn.className = 'msg-thinking-toggle' + (_thinkingVisible ? ' active' : '');
+  btn.innerHTML = _thinkingVisible ? '🧠 思考可见' : '🧠 思考隐藏';
+  btn.onclick = toggleThinkingVisible;
+  document.body.appendChild(btn);
 }
 
 // ── 配置弹窗 ──
@@ -1413,8 +1446,11 @@ function renderMessages() {
     } else {
       bubblesHtml = `<div class="msg-bubble">${formatMsg(displayContent)}${renderAttachments(m.attachments)}</div>`;
     }
+    const thinkingText = isAssistant ? getThinkingFromAttachments(m) : '';
+    const thinkingHtml = thinkingText ? renderThinkingBlock(thinkingText, m.id) : '';
     const avatarSrc = isUser ? '/public/UserIcon.png' : '/public/AIIcon.png';
     const ttsBtn = !isUser ? `<button class="tts-replay-btn" onclick="replayTTS('${m.id}')" title="重听语音">🔊</button>` : '';
+    if (thinkingText) ensureThinkingToggle();
     return `
     <div class="msg-row ${m.role}" id="m_${m.id}" data-msg-id="${m.id}">
       <div class="msg-avatar-col">
@@ -1422,6 +1458,7 @@ function renderMessages() {
         ${ttsBtn}
       </div>
       <div class="msg-body">
+        ${thinkingHtml}
         <div class="msg-role-row">
           ${dotsLeft}<span class="msg-role-name">${roleLabel}</span><span class="msg-time">${time}</span>${dotsRight}${feedbackHtml}${starBadge}
           <div class="msg-menu" id="menu_${m.id}">${actionsHtml}</div>
@@ -2225,9 +2262,31 @@ async function _processSSEStream(res) {
           if (data.type === "start") {
             aiMsgId = data.id;
             streamingAiId = aiMsgId;
+            _streamingThinking[aiMsgId] = "";
             currentMessages.push({ id: aiMsgId, conv_id: currentConvId, role: "assistant", content: "...", created_at: Date.now()/1000 });
             renderMessages();
             _startTypingAnim(aiMsgId);
+          } else if (data.type === "thinking") {
+            if (aiMsgId) {
+              _streamingThinking[aiMsgId] = (_streamingThinking[aiMsgId] || "") + data.content;
+              if (_thinkingVisible) {
+                const container = document.getElementById(`m_${aiMsgId}`);
+                if (container) {
+                  let block = container.querySelector('.msg-thinking');
+                  if (!block) {
+                    block = document.createElement('details');
+                    block.className = 'msg-thinking';
+                    block.open = true;
+                    block.innerHTML = '<summary>🧠 思考中...</summary><div class="thinking-body"></div>';
+                    const body = container.querySelector('.msg-body');
+                    if (body) body.insertBefore(block, body.querySelector('.msg-role-row'));
+                  }
+                  const tb = block.querySelector('.thinking-body');
+                  if (tb) tb.textContent = _streamingThinking[aiMsgId];
+                  ensureThinkingToggle();
+                }
+              }
+            }
           } else if (data.type === "cli_status") {
             _updateTypingStatus(aiMsgId, data.text);
           } else if (data.type === "chunk" || data.type === "replace") {
@@ -2388,14 +2447,27 @@ async function saveEdit(id) {
           const data = JSON.parse(line.slice(6));
           if (data.type === 'start') {
             _stopTypingAnim();
-            // 替换临时思考占位为真正的 AI 消息
             const tempIdx = currentMessages.findIndex(m => m.id === tempAiId);
             if (tempIdx >= 0) currentMessages.splice(tempIdx, 1);
             aiMsgId = data.id;
             streamingAiId = aiMsgId;
+            _streamingThinking[aiMsgId] = "";
             currentMessages.push({ id: aiMsgId, conv_id: currentConvId, role: 'assistant', content: '...', created_at: Date.now()/1000 });
             renderMessages();
             _startTypingAnim(aiMsgId);
+          } else if (data.type === 'thinking') {
+            if (aiMsgId) {
+              _streamingThinking[aiMsgId] = (_streamingThinking[aiMsgId] || '') + data.content;
+              if (_thinkingVisible) {
+                const container = document.getElementById(`m_${aiMsgId}`);
+                if (container) {
+                  let block = container.querySelector('.msg-thinking');
+                  if (!block) { block = document.createElement('details'); block.className = 'msg-thinking'; block.open = true; block.innerHTML = '<summary>🧠 思考中...</summary><div class="thinking-body"></div>'; const body = container.querySelector('.msg-body'); if (body) body.insertBefore(block, body.querySelector('.msg-role-row')); }
+                  const tb = block.querySelector('.thinking-body'); if (tb) tb.textContent = _streamingThinking[aiMsgId];
+                  ensureThinkingToggle();
+                }
+              }
+            }
           } else if (data.type === 'cli_status') {
             _updateTypingStatus(aiMsgId, data.text);
           } else if (data.type === 'chunk' || data.type === 'replace') {
@@ -2526,9 +2598,23 @@ async function regenerateMsg(aiMsgId) {
           if (d.type === "start") {
             newId = d.id;
             streamingAiId = newId;
+            _streamingThinking[newId] = "";
             currentMessages.push({ id: newId, conv_id: currentConvId, role: "assistant", content: "...", created_at: Date.now()/1000 });
             renderMessages();
             _startTypingAnim(newId);
+          } else if (d.type === "thinking") {
+            if (newId) {
+              _streamingThinking[newId] = (_streamingThinking[newId] || "") + d.content;
+              if (_thinkingVisible) {
+                const container = document.getElementById(`m_${newId}`);
+                if (container) {
+                  let block = container.querySelector('.msg-thinking');
+                  if (!block) { block = document.createElement('details'); block.className = 'msg-thinking'; block.open = true; block.innerHTML = '<summary>🧠 思考中...</summary><div class="thinking-body"></div>'; const body = container.querySelector('.msg-body'); if (body) body.insertBefore(block, body.querySelector('.msg-role-row')); }
+                  const tb = block.querySelector('.thinking-body'); if (tb) tb.textContent = _streamingThinking[newId];
+                  ensureThinkingToggle();
+                }
+              }
+            }
           } else if (d.type === "chunk" || d.type === "replace") {
             _stopTypingAnim();
             aiContent = d.type === "replace" ? d.content : aiContent + d.content;

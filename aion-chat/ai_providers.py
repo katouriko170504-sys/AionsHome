@@ -12,6 +12,7 @@ from config import get_key, MODELS, UPLOADS_DIR, CODEX_UPLOADS_DIR, SETTINGS, ge
 
 # CLI 状态前缀：yield 此前缀的 chunk 会被 _bg_generate 拦截为状态事件，不送入 TTS 和正文
 CLI_STATUS_PREFIX = "\x00CLI_STATUS:"
+THINKING_PREFIX = "\x00THINKING:"
 _ANTIGRAVITY_DEFAULT_PRINT_TIMEOUT = "10m"
 _ANTIGRAVITY_PRINT_TIMEOUT_RE = re.compile(r"\d+(?:ms|s|m|h)?")
 _ANTIGRAVITY_TIMEOUT_NOTICE_RE = re.compile(
@@ -397,6 +398,8 @@ async def call_aipro(messages: list, model: str, meta: dict | None = None, tempe
                             meta["total_tokens"] = u.get("total_tokens", 0)
                             meta["raw"] = u
                         delta = chunk["choices"][0].get("delta", {}) if chunk.get("choices") else {}
+                        if "reasoning_content" in delta and delta["reasoning_content"]:
+                            yield f"{THINKING_PREFIX}{delta['reasoning_content']}"
                         if "content" in delta and delta["content"]:
                             yield delta["content"]
                     except:
@@ -437,6 +440,8 @@ async def call_openai_compatible(base_url: str, api_key: str, model: str, messag
                             meta["total_tokens"] = u.get("total_tokens", 0)
                             meta["raw"] = u
                         delta = chunk["choices"][0].get("delta", {}) if chunk.get("choices") else {}
+                        if "reasoning_content" in delta and delta["reasoning_content"]:
+                            yield f"{THINKING_PREFIX}{delta['reasoning_content']}"
                         if "content" in delta and delta["content"]:
                             yield delta["content"]
                     except:

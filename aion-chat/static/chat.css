@@ -149,6 +149,18 @@ body { font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-se
 .msg-row.user .msg-bubbles { align-items:flex-end; }
 .msg-row.assistant .msg-bubbles { align-items:flex-start; }
 
+/* ── 思考过程折叠块 ── */
+.msg-thinking { margin-bottom:4px; border-radius:10px; overflow:hidden; font-size:13px; max-width:85%; }
+.msg-thinking summary { cursor:pointer; padding:6px 12px; background:rgba(120,120,120,0.1); color:var(--text2, #666); font-size:12px; user-select:none; list-style:none; display:flex; align-items:center; gap:5px; border-radius:10px; }
+.msg-thinking summary::-webkit-details-marker { display:none; }
+.msg-thinking summary::before { content:'▶'; font-size:9px; transition:transform 0.15s; display:inline-block; }
+.msg-thinking[open] summary::before { transform:rotate(90deg); }
+.msg-thinking[open] summary { border-radius:10px 10px 0 0; }
+.msg-thinking .thinking-body { padding:8px 12px; background:rgba(120,120,120,0.06); border-top:1px solid rgba(120,120,120,0.1); white-space:pre-wrap; word-break:break-word; line-height:1.55; color:var(--text2, #555); font-size:12px; max-height:50vh; overflow-y:auto; }
+.msg-thinking-toggle { position:fixed; bottom:80px; right:16px; z-index:8; background:var(--surface, #fff); border:1px solid var(--border, #ddd); border-radius:20px; padding:5px 12px; font-size:11px; cursor:pointer; color:var(--text2, #666); box-shadow:0 1px 4px rgba(0,0,0,0.1); display:flex; align-items:center; gap:4px; }
+.msg-thinking-toggle.active { background:rgba(120,80,200,0.12); border-color:rgba(120,80,200,0.3); color:#7850c8; }
+@media (max-width:768px) { .msg-thinking { max-width:95%; } .msg-thinking-toggle { bottom:70px; right:10px; } }
+
 .msg-time { font-size: 10px; color: var(--text3); margin-left: 4px; }
 
 /* ── [CAM_CHECK] 监控查看加载指示器 ── */

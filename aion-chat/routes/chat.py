@@ -15,7 +15,7 @@ from typing import Optional, List, Any
 from config import DEFAULT_MODEL, load_worldbook, SETTINGS, UPLOADS_DIR, CODEX_UPLOADS_DIR, PUBLIC_DIR, MODELS
 from database import get_db
 from ws import manager
-from ai_providers import stream_ai, CLI_STATUS_PREFIX
+from ai_providers import stream_ai, CLI_STATUS_PREFIX, THINKING_PREFIX
 from memory import recall_memories, instant_digest, fetch_source_details, build_surfacing_memories, get_embedding, _pack_embedding
 from camera import cam, CAM_CHECK_CMD, perform_cam_check
 from activity import is_activity_tracking_enabled, get_activity_summary_for_prompt, get_user_dynamics_for_prompt
@@ -1087,6 +1087,7 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
 
     async def _bg_generate():
         full_text = ""
+        thinking_text = ""
         has_error = False
         try:
             await _q.put({"id": ai_msg_id, "type": "start"})
@@ -1094,6 +1095,11 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
                 async for chunk in stream_ai(history, model_key, usage_meta, max_tokens=body.max_tokens, cancel_event=cancel_event):
                     if chunk.startswith(CLI_STATUS_PREFIX):
                         await _q.put({"type": "cli_status", "text": chunk[len(CLI_STATUS_PREFIX):]})
+                        continue
+                    if chunk.startswith(THINKING_PREFIX):
+                        t = chunk[len(THINKING_PREFIX):]
+                        thinking_text += t
+                        await _q.put({"type": "thinking", "content": t})
                         continue
                     full_text += chunk
                     if _provider == "antigravity_cli":
@@ -1285,8 +1291,9 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
                     pass
 
             music_atts = [{"type": "music", "name": s["name"], "artist": s["artist"], "id": s["id"]} for s in music_cards] if music_cards else []
+            thinking_atts = [{"type": "thinking", "content": thinking_text}] if thinking_text else []
             full_text, image_atts = _extract_reply_image_attachments(full_text)
-            reply_atts = _dedupe_attachments(music_atts + luckin_payment_attachments(luckin_results) + image_atts)
+            reply_atts = _dedupe_attachments(music_atts + thinking_atts + luckin_payment_attachments(luckin_results) + image_atts)
             att_json = json.dumps(reply_atts, ensure_ascii=False) if reply_atts else ""
 
             now2 = time.time()
@@ -1736,6 +1743,7 @@ async def send_message(conv_id: str, body: MsgCreate):
     async def _bg_generate():
         """后台任务：AI 流式生成 → 后处理 → 存 DB → WS 广播。始终运行到结束。"""
         full_text = ""
+        thinking_text = ""
         has_error = False
         try:
             await _q.put({"id": ai_msg_id, "type": "start"})
@@ -1743,6 +1751,11 @@ async def send_message(conv_id: str, body: MsgCreate):
                 async for chunk in stream_ai(history, model_key, usage_meta, max_tokens=body.max_tokens, cancel_event=cancel_event):
                     if chunk.startswith(CLI_STATUS_PREFIX):
                         await _q.put({"type": "cli_status", "text": chunk[len(CLI_STATUS_PREFIX):]})
+                        continue
+                    if chunk.startswith(THINKING_PREFIX):
+                        t = chunk[len(THINKING_PREFIX):]
+                        thinking_text += t
+                        await _q.put({"type": "thinking", "content": t})
                         continue
                     full_text += chunk
                     if _provider == "antigravity_cli":
@@ -1989,8 +2002,9 @@ async def send_message(conv_id: str, body: MsgCreate):
 
             # 将音乐点歌信息存入 attachments，刷新后可显示胶囊
             music_atts = [{"type": "music", "name": s["name"], "artist": s["artist"], "id": s["id"]} for s in music_cards] if music_cards else []
+            thinking_atts = [{"type": "thinking", "content": thinking_text}] if thinking_text else []
             full_text, image_atts = _extract_reply_image_attachments(full_text)
-            reply_atts = _dedupe_attachments(music_atts + luckin_payment_attachments(luckin_results) + image_atts)
+            reply_atts = _dedupe_attachments(music_atts + thinking_atts + luckin_payment_attachments(luckin_results) + image_atts)
             att_json = json.dumps(reply_atts, ensure_ascii=False) if reply_atts else ""
 
             now2 = time.time()
@@ -2771,6 +2785,7 @@ async def regenerate_message(conv_id: str, context_limit: int = 5, whisper_mode:
     async def _bg_generate():
         """后台任务：AI 流式生成 → 后处理 → 存 DB → WS 广播。始终运行到结束。"""
         full_text = ""
+        thinking_text = ""
         has_error = False
         try:
             await _q.put({"id": ai_msg_id, "type": "start"})
@@ -2778,6 +2793,11 @@ async def regenerate_message(conv_id: str, context_limit: int = 5, whisper_mode:
                 async for chunk in stream_ai(history, model_key, usage_meta, temperature, max_tokens=max_tokens, cancel_event=cancel_event):
                     if chunk.startswith(CLI_STATUS_PREFIX):
                         await _q.put({"type": "cli_status", "text": chunk[len(CLI_STATUS_PREFIX):]})
+                        continue
+                    if chunk.startswith(THINKING_PREFIX):
+                        t = chunk[len(THINKING_PREFIX):]
+                        thinking_text += t
+                        await _q.put({"type": "thinking", "content": t})
                         continue
                     full_text += chunk
                     if _provider == "antigravity_cli":
@@ -2984,8 +3004,9 @@ async def regenerate_message(conv_id: str, context_limit: int = 5, whisper_mode:
 
             # 将音乐点歌信息存入 attachments，刷新后可显示胶囊
             music_atts = [{"type": "music", "name": s["name"], "artist": s["artist"], "id": s["id"]} for s in music_cards] if music_cards else []
+            thinking_atts = [{"type": "thinking", "content": thinking_text}] if thinking_text else []
             full_text, image_atts = _extract_reply_image_attachments(full_text)
-            reply_atts = _dedupe_attachments(music_atts + luckin_payment_attachments(luckin_results) + image_atts)
+            reply_atts = _dedupe_attachments(music_atts + thinking_atts + luckin_payment_attachments(luckin_results) + image_atts)
             att_json = json.dumps(reply_atts, ensure_ascii=False) if reply_atts else ""
 
             now2 = time.time()
