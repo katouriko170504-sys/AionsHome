@@ -59,6 +59,31 @@
     <input class="form-input" type="text" id="sfKeyInput" placeholder="输入硅基流动 API Key..." autocomplete="off" style="font-family:monospace">
     <label class="form-label">中转站 API Key</label>
     <input class="form-input" type="text" id="aiproKeyInput" placeholder="输入中转站 API Key..." autocomplete="off" style="font-family:monospace">
+
+    <div style="margin-top:18px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.08)">
+      <label class="form-label" style="font-size:15px;color:#ff8359">🔌 接入方管理</label>
+      <p style="font-size:12px;color:#aaa;margin:2px 0 10px 0">管理 API 接入方和密钥。绿色 ● 表示已配置，红色 ● 表示未配置。</p>
+      <div id="providerList" style="display:flex;flex-direction:column;gap:8px"></div>
+    </div>
+
+    <div style="margin-top:18px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.08)">
+      <label class="form-label" style="font-size:15px;color:#ff8359">🤖 模型管理</label>
+      <p style="font-size:12px;color:#aaa;margin:2px 0 10px 0">管理可用的模型。只有接入方已配置密钥的模型才会出现在聊天页的下拉菜单里。</p>
+      <div id="modelList" style="display:flex;flex-direction:column;gap:6px"></div>
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.05)">
+        <label class="form-label">添加新模型</label>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <input class="form-input" type="text" id="newModelKey" placeholder="显示名称（如 Claude-Opus-4.6）" autocomplete="off">
+          <select class="form-input" id="newModelProvider" style="background:#1a1a2e;color:#eee;border:1px solid rgba(255,255,255,0.15)"></select>
+          <input class="form-input" type="text" id="newModelId" placeholder="模型ID（如 anthropic/claude-opus-4-6）" autocomplete="off" style="font-family:monospace">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#ccc">
+            <input type="checkbox" id="newModelVision" style="width:16px;height:16px"> 支持视觉（图片）
+          </label>
+          <button class="btn-save" onclick="addModel()" style="align-self:flex-start">添加模型</button>
+        </div>
+      </div>
+    </div>
+
     <label class="form-label">网易云 MUSIC_U Cookie（VIP 点歌）</label>
     <input class="form-input" type="text" id="neteaseMusicUInput" placeholder="浏览器 F12 → Cookie → MUSIC_U" autocomplete="off" style="font-family:monospace">
 
@@ -109,6 +134,8 @@ connectCommonWS();
   $("luckinLatitudeInput").value = s.luckin_default_latitude || "";
   $("luckinShopKeywordInput").value = s.luckin_default_shop_keyword || "";
   refreshPhoneScreenStatus();
+  await loadProviders();
+  await loadModels();
 })();
 
 async function saveSettings() {
@@ -131,6 +158,87 @@ async function saveSettings() {
     luckin_default_shop_keyword: $("luckinShopKeywordInput").value.trim()
   });
   showToast("✅ 已保存");
+}
+
+// ── 接入方管理 ──
+async function loadProviders() {
+  const providers = await api("GET", "/api/providers");
+  const container = document.getElementById("providerList");
+  if (!container) return;
+  container.innerHTML = providers.filter(p => p.key_field).map(p => `
+    <div style="display:flex;align-items:center;gap:8px;padding:8px;background:rgba(255,255,255,0.03);border-radius:6px">
+      <span style="color:${p.has_key ? '#4ade80' : '#f87171'};font-size:18px">●</span>
+      <span style="flex:1;font-size:14px;color:#eee">${p.name}</span>
+      <input class="form-input" type="text" id="pkey_${p.id}" placeholder="API Key..."
+             style="flex:2;font-family:monospace;font-size:12px;margin:0" autocomplete="off">
+      <button class="btn-save" style="padding:4px 12px;font-size:12px"
+              onclick="saveProviderKey('${p.id}')">保存</button>
+    </div>
+  `).join("");
+}
+
+async function saveProviderKey(providerId) {
+  const input = document.getElementById("pkey_" + providerId);
+  if (!input) return;
+  const key = input.value.trim();
+  if (!key) { showToast("请输入 API Key"); return; }
+  await api("PUT", "/api/providers/" + providerId + "/key", { key: key });
+  input.value = "";
+  showToast("✅ 已保存");
+  await loadProviders();
+}
+
+// ── 模型管理 ──
+async function loadModels() {
+  const models = await api("GET", "/api/models");
+  const providers = await api("GET", "/api/providers");
+  const container = document.getElementById("modelList");
+  const provSelect = document.getElementById("newModelProvider");
+  if (!container) return;
+
+  container.innerHTML = models.map(m => {
+    const prov = providers.find(p => p.id === m.provider);
+    const provName = prov ? prov.name : m.provider;
+    const hasKey = prov ? prov.has_key : false;
+    return `
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:rgba(255,255,255,0.03);border-radius:6px">
+      <span style="color:${hasKey ? '#4ade80' : '#f87171'};font-size:12px">●</span>
+      <span style="flex:1;font-size:13px;color:#eee">${m.key}</span>
+      <span style="font-size:11px;color:#888">${provName}</span>
+      <span style="font-size:11px;color:#666;font-family:monospace">${m.model}</span>
+      ${m.vision ? '<span style="font-size:10px;color:#60a5fa">👁</span>' : ''}
+      <button style="background:none;border:none;color:#f87171;cursor:pointer;font-size:14px;padding:2px 6px"
+              onclick="deleteModel('${m.key.replace(/'/g, "\\'")}')">✕</button>
+    </div>`;
+  }).join("");
+
+  if (provSelect) {
+    provSelect.innerHTML = providers.map(p =>
+      `<option value="${p.id}">${p.name}</option>`
+    ).join("");
+  }
+}
+
+async function addModel() {
+  const key = document.getElementById("newModelKey").value.trim();
+  const provider = document.getElementById("newModelProvider").value;
+  const model = document.getElementById("newModelId").value.trim();
+  const vision = document.getElementById("newModelVision").checked;
+  if (!key || !model) { showToast("请填写名称和模型ID"); return; }
+  const res = await api("POST", "/api/models", { key, provider, model, vision });
+  if (res.error) { showToast("❌ " + res.error); return; }
+  document.getElementById("newModelKey").value = "";
+  document.getElementById("newModelId").value = "";
+  document.getElementById("newModelVision").checked = false;
+  showToast("✅ 已添加");
+  await loadModels();
+}
+
+async function deleteModel(key) {
+  if (!confirm("确定删除模型 " + key + "？")) return;
+  await api("DELETE", "/api/models/" + encodeURIComponent(key));
+  showToast("✅ 已删除");
+  await loadModels();
 }
 
 function enablePhoneScreenSupervision() {

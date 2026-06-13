@@ -75,7 +75,7 @@ window.addEventListener('storage', e => {
 
 // ── 初始化 ──
 async function init() {
-  models = await api("GET", "/api/models");
+  models = await api("GET", "/api/available-models");
   renderModelSelect();
   worldBook = await api("GET", "/api/worldbook");
   try { chatroomConfig = await api("GET", "/api/chatroom/config"); } catch(e) { chatroomConfig = {}; }
@@ -1332,7 +1332,7 @@ function messagesForDisplay(messages) {
 // ── 渲染 ──
 function renderModelSelect() {
   $("modelSelect").innerHTML = models.map(m =>
-    `<option value="${m.key}">${m.key}</option>`
+    `<option value="${m.key}">${m.key}${m.provider_name ? ' (' + m.provider_name + ')' : ''}</option>`
   ).join("");
 }
 
