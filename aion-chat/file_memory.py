@@ -34,10 +34,20 @@ def get_core_memory_files() -> list[str]:
             return list(_DEFAULT_CORE_FILES)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     _MEMORY_CONFIG_PATH.write_text(
-        json.dumps({"core_files": _DEFAULT_CORE_FILES, "compress_model": ""}, ensure_ascii=False, indent=2),
+        json.dumps({"core_files": _DEFAULT_CORE_FILES, "compress_model": "", "context_limit": 5, "compress_history_limit": 30}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     return list(_DEFAULT_CORE_FILES)
+
+
+def get_memory_config() -> dict:
+    """读取 memory_config.json，返回完整配置 dict"""
+    if _MEMORY_CONFIG_PATH.exists():
+        try:
+            return json.loads(_MEMORY_CONFIG_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {"core_files": _DEFAULT_CORE_FILES, "compress_model": "", "context_limit": 5, "compress_history_limit": 30}
 
 
 def read_persona_files() -> str:

@@ -815,6 +815,10 @@ async def abort_generation(conv_id: str):
 @router.post("/api/messages/{msg_id}/edit-resend")
 async def edit_resend_message(msg_id: str, body: MsgEditResend):
     """编辑用户消息后重新发送：更新内容 → 删除后续消息 → AI 重新回复"""
+    from file_memory import get_memory_config
+    _mem_cfg = get_memory_config()
+    if body.context_limit == 5:
+        body.context_limit = _mem_cfg.get("context_limit", 5)
     if body.client_id:
         manager.set_last_sender(body.client_id)
     # Aion 侧：用户在 Aion 私聊发消息
@@ -870,7 +874,8 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
     except ImportError:
         _fm_active = False
     if _fm_active:
-        merged = await fetch_merged_timeline("aion", 30, conv_id=conv_id)
+        _compress_fetch = _mem_cfg.get("compress_history_limit", 30)
+        merged = await fetch_merged_timeline("aion", _compress_fetch, conv_id=conv_id)
         try:
             merged, _ctx_summary = await _compress_context(conv_id, merged, body.context_limit)
         except Exception as _ce:
@@ -1388,6 +1393,10 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
 # ── 发送消息 + AI 回复（SSE 流式） ────────────────
 @router.post("/api/conversations/{conv_id}/send")
 async def send_message(conv_id: str, body: MsgCreate):
+    from file_memory import get_memory_config
+    _mem_cfg = get_memory_config()
+    if body.context_limit == 5:
+        body.context_limit = _mem_cfg.get("context_limit", 5)
     # 记录最后发消息的客户端 ID
     if body.client_id:
         manager.set_last_sender(body.client_id)
@@ -1447,7 +1456,8 @@ async def send_message(conv_id: str, body: MsgCreate):
     except ImportError:
         _fm_active = False
     if _fm_active:
-        merged = await fetch_merged_timeline("aion", 30, conv_id=conv_id)
+        _compress_fetch = _mem_cfg.get("compress_history_limit", 30)
+        merged = await fetch_merged_timeline("aion", _compress_fetch, conv_id=conv_id)
         try:
             merged, _ctx_summary = await _compress_context(conv_id, merged, body.context_limit)
         except Exception as _ce:
@@ -2508,6 +2518,10 @@ async def perform_activity_check(conv_id: str, model_key: str, n: int = 6):
 # ── 重新生成 AI 回复 ──────────────────────────────
 @router.post("/api/conversations/{conv_id}/regenerate")
 async def regenerate_message(conv_id: str, context_limit: int = 5, whisper_mode: bool = False, fast_mode: bool = False, temperature: Optional[float] = None, max_tokens: Optional[int] = None, tts_enabled: bool = False, tts_voice: str = ""):
+    from file_memory import get_memory_config
+    _mem_cfg = get_memory_config()
+    if context_limit == 5:
+        context_limit = _mem_cfg.get("context_limit", 5)
     async with get_db() as db:
         db.row_factory = __import__('aiosqlite').Row
         cur = await db.execute("SELECT model FROM conversations WHERE id=?", (conv_id,))
@@ -2522,7 +2536,8 @@ async def regenerate_message(conv_id: str, context_limit: int = 5, whisper_mode:
     except ImportError:
         _fm_active = False
     if _fm_active:
-        merged = await fetch_merged_timeline("aion", 30, conv_id=conv_id)
+        _compress_fetch = _mem_cfg.get("compress_history_limit", 30)
+        merged = await fetch_merged_timeline("aion", _compress_fetch, conv_id=conv_id)
         try:
             merged, _ctx_summary = await _compress_context(conv_id, merged, context_limit)
         except Exception as _ce:
