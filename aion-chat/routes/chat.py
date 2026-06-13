@@ -1069,7 +1069,7 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
             history.insert(cap_idx + inject_offset, {"role": "user", "content": mem_block})
             history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到，我会自然地参考这些记忆。"})
 
-    debug_prompt = [{"role": m["role"], "content": m["content"][:500]} for m in history]
+    debug_prompt = [{"role": m["role"], "content": m["content"]} for m in history]
 
     ai_msg_id = f"msg_{int(time.time()*1000)}"
     usage_meta: dict = {}
@@ -1714,7 +1714,7 @@ async def send_message(conv_id: str, body: MsgCreate):
             history.insert(cap_idx + inject_offset, {"role": "user", "content": mem_block})
             history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到，我会自然地参考这些记忆。"})
 
-    debug_prompt = [{"role": m["role"], "content": m["content"][:500]} for m in history]
+    debug_prompt = [{"role": m["role"], "content": m["content"]} for m in history]
 
     ai_msg_id = f"msg_{int(time.time()*1000)}"
     usage_meta: dict = {}
@@ -2751,7 +2751,7 @@ async def regenerate_message(conv_id: str, context_limit: int = 5, whisper_mode:
             history.insert(cap_idx + inject_offset, {"role": "user", "content": mem_block})
             history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到，我会自然地参考这些记忆。"})
 
-    debug_prompt = [{"role": m["role"], "content": m["content"][:500]} for m in history]
+    debug_prompt = [{"role": m["role"], "content": m["content"]} for m in history]
     ai_msg_id = f"msg_{int(time.time()*1000)}"
     usage_meta: dict = {}
 
