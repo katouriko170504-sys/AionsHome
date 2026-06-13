@@ -86,9 +86,8 @@ async def _call_compress_model(prompt: str) -> str:
 
     chunks = []
     async for chunk in stream_ai(
+        messages=[{"role": "user", "content": prompt}],
         model_key=model_key,
-        history=[{"role": "user", "content": prompt}],
-        system_prompt=None,
         temperature=0.3,
         max_tokens=1024,
     ):
