@@ -67,7 +67,9 @@ def get_key(provider: str) -> str:
         return SETTINGS.get("gemini_free_key", "") or SETTINGS.get("gemini_key", "")
     if provider == "aipro":
         return SETTINGS.get("aipro_key", "")
-    return SETTINGS.get("siliconflow_key", "")
+    if provider == "siliconflow":
+        return SETTINGS.get("siliconflow_key", "")
+    return SETTINGS.get(f"{provider}_key", "")
 
 def get_sentinel_config() -> dict:
     """
@@ -210,8 +212,29 @@ def save_file_index(idx):
 def sanitize_filename(name):
     return re.sub(r'[\\/:*?"<>|\n\r]', '_', name).strip().rstrip('.')
 
+# ── 接入方配置 ────────────────────────────────────
+PROVIDERS_PATH = DATA_DIR / "providers.json"
+
+def load_providers() -> list:
+    if PROVIDERS_PATH.exists():
+        try:
+            return json.loads(PROVIDERS_PATH.read_text(encoding='utf-8'))
+        except:
+            pass
+    return []
+
+PROVIDERS = load_providers()
+
+def get_provider(provider_id: str) -> dict | None:
+    for p in PROVIDERS:
+        if p["id"] == provider_id:
+            return p
+    return None
+
 # ── 模型配置 ─────────────────────────────────────
-MODELS = {
+MODELS_PATH = DATA_DIR / "models.json"
+
+_HARDCODED_MODELS = {
     "硅基GLM-5.1":      {"provider": "siliconflow", "model": "Pro/zai-org/GLM-5.1", "vision": False},
     "硅基GLM-5.0":      {"provider": "siliconflow", "model": "Pro/zai-org/GLM-5", "vision": False},
     "Kimi-K2.6":      {"provider": "siliconflow", "model": "Pro/moonshotai/Kimi-K2.6", "vision": True},
@@ -221,14 +244,30 @@ MODELS = {
     "硅基DS-V4-Pro": {"provider": "siliconflow", "model": "deepseek-ai/DeepSeek-V4-Pro", "vision": False},
     "DS-V4-Flash":     {"provider": "aipro", "model": "deepseek-v4-flash", "vision": False},
     "CLI-3.1pro":       {"provider": "gemini_cli", "model": "gemini-3.1-pro-preview", "vision": True},
-    # ChatGPT-auth Codex does not support some Codex-only defaults, so pin a
-    # model that works after account switches.
     "Codex":            {"provider": "codex_cli",  "model": "gpt-5.5", "vision": True},
     "Antigravity":        {"provider": "antigravity_cli", "model": "", "vision": True},
     "AGY-3.5flash":        {"provider": "antigravity_cli", "model": "Gemini 3.5 Flash (Medium)", "vision": True},
     "AGY-3.1pro":          {"provider": "antigravity_cli", "model": "Gemini 3.1 Pro (High)", "vision": True},
     "AGY-Claude-Opus-4.6": {"provider": "antigravity_cli", "model": "Claude Opus 4.6 (Thinking)", "vision": True},
 }
+
+def _load_models() -> dict:
+    if MODELS_PATH.exists():
+        try:
+            return json.loads(MODELS_PATH.read_text(encoding='utf-8'))
+        except:
+            pass
+    _save_models(_HARDCODED_MODELS)
+    return dict(_HARDCODED_MODELS)
+
+def _save_models(models: dict):
+    MODELS_PATH.write_text(json.dumps(models, ensure_ascii=False, indent=2), encoding='utf-8')
+
+def reload_models():
+    global MODELS
+    MODELS = _load_models()
+
+MODELS = _load_models()
 
 DEFAULT_MODEL = "Gemini-3.5-flash"
 
@@ -271,3 +310,11 @@ ALLOWED_TYPES = {'image/jpeg', 'image/png', 'image/gif', 'image/webp',
                  'video/mp4', 'video/webm', 'video/quicktime',
                  'audio/webm', 'audio/ogg', 'audio/wav', 'audio/mp4',
                  'audio/mpeg', 'audio/x-wav'}
+
+def reload_providers():
+    global PROVIDERS
+    PROVIDERS = load_providers()
+
+def save_providers(providers: list):
+    PROVIDERS_PATH.write_text(json.dumps(providers, ensure_ascii=False, indent=2), encoding='utf-8')
+    reload_providers()

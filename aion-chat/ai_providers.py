@@ -402,6 +402,46 @@ async def call_aipro(messages: list, model: str, meta: dict | None = None, tempe
                     except:
                         pass
 
+# ── 通用 OpenAI 兼容接入方 ────────────────────────
+async def call_openai_compatible(base_url: str, api_key: str, model: str, messages: list, meta: dict | None = None, temperature: float | None = None, max_tokens: int | None = None, provider_name: str = "中转站"):
+    url = f"{base_url.rstrip('/')}/chat/completions"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    api_messages = build_multimodal_messages(messages)
+    payload = {"model": model, "messages": api_messages, "stream": True,
+               "stream_options": {"include_usage": True}}
+    if temperature is not None:
+        payload["temperature"] = temperature
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
+    async with httpx.AsyncClient(timeout=120) as client:
+        async with client.stream("POST", url, json=payload, headers=headers) as resp:
+            if resp.status_code != 200:
+                body = await resp.aread()
+                try:
+                    err = json.loads(body).get("error", {}).get("message", body.decode())
+                except:
+                    err = body.decode(errors="replace")[:500]
+                yield f"[{provider_name}错误 {resp.status_code}] {err}"
+                return
+            async for line in resp.aiter_lines():
+                if line.startswith("data: "):
+                    data = line[6:]
+                    if data.strip() == "[DONE]":
+                        return
+                    try:
+                        chunk = json.loads(data)
+                        if meta is not None and "usage" in chunk and chunk["usage"]:
+                            u = chunk["usage"]
+                            meta["prompt_tokens"] = u.get("prompt_tokens", 0)
+                            meta["completion_tokens"] = u.get("completion_tokens", 0)
+                            meta["total_tokens"] = u.get("total_tokens", 0)
+                            meta["raw"] = u
+                        delta = chunk["choices"][0].get("delta", {}) if chunk.get("choices") else {}
+                        if "content" in delta and delta["content"]:
+                            yield delta["content"]
+                    except:
+                        pass
+
 # ── Gemini CLI ────────────────────────────────────
 def _find_gemini_script() -> str | None:
     """定位全局安装的 gemini CLI 脚本路径"""
@@ -1268,33 +1308,48 @@ async def stream_ai(messages: list, model_key: str, meta: dict | None = None, te
     if not cfg.get("vision", True) and _messages_have_images(normalized):
         yield f"{CLI_STATUS_PREFIX}哨兵模型正在识别图片内容..."
         normalized = await _sentinel_describe_images(normalized)
-    if cfg["provider"] == "siliconflow":
-        async for chunk in call_siliconflow(normalized, cfg["model"], meta, temperature, max_tokens):
+    provider_id = cfg["provider"]
+
+    from config import get_provider, get_key
+    provider_cfg = get_provider(provider_id)
+
+    if provider_cfg and provider_cfg.get("type") == "openai_compatible":
+        api_key = get_key(provider_id)
+        if not api_key:
+            yield f"[错误] 接入方 {provider_cfg.get('name', provider_id)} 未配置 API Key"
+            return
+        async for chunk in call_openai_compatible(
+            base_url=provider_cfg["base_url"],
+            api_key=api_key,
+            model=cfg["model"],
+            messages=normalized,
+            meta=meta,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            provider_name=provider_cfg.get("name", provider_id)
+        ):
             if cancel_event and cancel_event.is_set():
                 return
             yield chunk
-    elif cfg["provider"] == "gemini":
+    elif provider_id == "gemini":
         async for chunk in call_gemini(normalized, cfg["model"], meta, temperature, max_tokens):
             if cancel_event and cancel_event.is_set():
                 return
             yield chunk
-    elif cfg["provider"] == "aipro":
-        async for chunk in call_aipro(normalized, cfg["model"], meta, temperature, max_tokens):
-            if cancel_event and cancel_event.is_set():
-                return
-            yield chunk
-    elif cfg["provider"] == "gemini_cli":
+    elif provider_id == "gemini_cli":
         async for chunk in call_gemini_cli(normalized, cfg["model"], meta, temperature, max_tokens):
             if cancel_event and cancel_event.is_set():
                 return
             yield chunk
-    elif cfg["provider"] == "antigravity_cli":
+    elif provider_id == "antigravity_cli":
         async for chunk in call_antigravity_cli(normalized, cfg["model"], meta, temperature, max_tokens):
             if cancel_event and cancel_event.is_set():
                 return
             yield chunk
-    elif cfg["provider"] == "codex_cli":
+    elif provider_id == "codex_cli":
         async for chunk in call_codex_cli(normalized, cfg["model"], meta, temperature, max_tokens):
             if cancel_event and cancel_event.is_set():
                 return
             yield chunk
+    else:
+        yield f"[错误] 未知接入方类型: {provider_id}"

@@ -895,10 +895,10 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
     prefix = []
     if wb.get("ai_persona"):
         prefix.append({"role": "user", "content": f"[系统设定 - AI人设]\n{wb['ai_persona']}"})
-        prefix.append({"role": "assistant", "content": "收到，我会按照设定扮演角色。"})
+        prefix.append({"role": "assistant", "content": "我就是澄。"})
     if wb.get("user_persona"):
         prefix.append({"role": "user", "content": f"[系统设定 - 用户信息]\n{wb['user_persona']}"})
-        prefix.append({"role": "assistant", "content": "收到，我会记住你的信息。"})
+        prefix.append({"role": "assistant", "content": "我记住了。"})
     if wb.get("system_prompt") and wb.get("system_prompt_enabled", True):
         prefix.append({"role": "user", "content": f"[系统提示]\n{wb['system_prompt']}"})
         prefix.append({"role": "assistant", "content": "收到，我会遵循这些规则。"})
@@ -1479,10 +1479,10 @@ async def send_message(conv_id: str, body: MsgCreate):
     prefix = []
     if wb.get("ai_persona"):
         prefix.append({"role": "user", "content": f"[系统设定 - AI人设]\n{wb['ai_persona']}"})
-        prefix.append({"role": "assistant", "content": "收到，我会按照设定扮演角色。"})
+        prefix.append({"role": "assistant", "content": "我就是澄。"})
     if wb.get("user_persona"):
         prefix.append({"role": "user", "content": f"[系统设定 - 用户信息]\n{wb['user_persona']}"})
-        prefix.append({"role": "assistant", "content": "收到，我会记住你的信息。"})
+        prefix.append({"role": "assistant", "content": "我记住了。"})
     if wb.get("system_prompt") and wb.get("system_prompt_enabled", True):
         prefix.append({"role": "user", "content": f"[系统提示]\n{wb['system_prompt']}"})
         prefix.append({"role": "assistant", "content": "收到，我会遵循这些规则。"})
@@ -2280,10 +2280,10 @@ async def perform_poi_check(conv_id: str, model_key: str, categories: list[str])
     prefix = []
     if wb.get("ai_persona"):
         prefix.append({"role": "user", "content": f"[系统设定 - AI人设]\n{wb['ai_persona']}"})
-        prefix.append({"role": "assistant", "content": "收到，我会按照设定扮演角色。"})
+        prefix.append({"role": "assistant", "content": "我就是澄。"})
     if wb.get("user_persona"):
         prefix.append({"role": "user", "content": f"[系统设定 - 用户信息]\n{wb['user_persona']}"})
-        prefix.append({"role": "assistant", "content": "收到，我会记住你的信息。"})
+        prefix.append({"role": "assistant", "content": "我记住了。"})
     if wb.get("system_prompt") and wb.get("system_prompt_enabled", True):
         prefix.append({"role": "user", "content": f"[系统提示]\n{wb['system_prompt']}"})
         prefix.append({"role": "assistant", "content": "收到，我会遵循这些规则。"})
@@ -2412,10 +2412,10 @@ async def perform_activity_check(conv_id: str, model_key: str, n: int = 6):
     prefix = []
     if wb.get("ai_persona"):
         prefix.append({"role": "user", "content": f"[系统设定 - AI人设]\n{wb['ai_persona']}"})
-        prefix.append({"role": "assistant", "content": "收到，我会按照设定扮演角色。"})
+        prefix.append({"role": "assistant", "content": "我就是澄。"})
     if wb.get("user_persona"):
         prefix.append({"role": "user", "content": f"[系统设定 - 用户信息]\n{wb['user_persona']}"})
-        prefix.append({"role": "assistant", "content": "收到，我会记住你的信息。"})
+        prefix.append({"role": "assistant", "content": "我记住了。"})
     if wb.get("system_prompt") and wb.get("system_prompt_enabled", True):
         prefix.append({"role": "user", "content": f"[系统提示]\n{wb['system_prompt']}"})
         prefix.append({"role": "assistant", "content": "收到，我会遵循这些规则。"})
@@ -2561,10 +2561,10 @@ async def regenerate_message(conv_id: str, context_limit: int = 5, whisper_mode:
     prefix = []
     if wb.get("ai_persona"):
         prefix.append({"role": "user", "content": f"[系统设定 - AI人设]\n{wb['ai_persona']}"})
-        prefix.append({"role": "assistant", "content": "收到，我会按照设定扮演角色。"})
+        prefix.append({"role": "assistant", "content": "我就是澄。"})
     if wb.get("user_persona"):
         prefix.append({"role": "user", "content": f"[系统设定 - 用户信息]\n{wb['user_persona']}"})
-        prefix.append({"role": "assistant", "content": "收到，我会记住你的信息。"})
+        prefix.append({"role": "assistant", "content": "我记住了。"})
     if wb.get("system_prompt") and wb.get("system_prompt_enabled", True):
         prefix.append({"role": "user", "content": f"[系统提示]\n{wb['system_prompt']}"})
         prefix.append({"role": "assistant", "content": "收到，我会遵循这些规则。"})

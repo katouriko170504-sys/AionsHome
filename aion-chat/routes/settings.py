@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 
 import httpx
 
-from config import SETTINGS, MODELS, save_settings, get_key, get_sentinel_config, load_worldbook, save_worldbook, load_chat_status, TTS_CACHE_DIR, TTS_CACHE_MAX_BYTES, THEATER_TTS_CACHE_DIR
+from config import SETTINGS, MODELS, save_settings, get_key, get_sentinel_config, load_worldbook, save_worldbook, load_chat_status, TTS_CACHE_DIR, TTS_CACHE_MAX_BYTES, THEATER_TTS_CACHE_DIR, PROVIDERS, load_providers, get_provider, reload_models, _save_models, MODELS_PATH
 from tts import cleanup_tts_cache_dir
 
 router = APIRouter()
@@ -19,7 +19,98 @@ router = APIRouter()
 # ── 模型列表 ──────────────────────────────────────
 @router.get("/api/models")
 async def list_models():
-    return [{"key": k, "provider": v["provider"]} for k, v in MODELS.items()]
+    return [{"key": k, "provider": v["provider"], "model": v.get("model", ""), "vision": v.get("vision", False)} for k, v in MODELS.items()]
+
+# ── 可用模型（只返回已配 key 的接入方下的模型）──
+@router.get("/api/available-models")
+async def list_available_models():
+    result = []
+    for key, cfg in MODELS.items():
+        provider_id = cfg["provider"]
+        prov = get_provider(provider_id)
+        if not prov:
+            continue
+        if prov["type"] in ("gemini_cli", "antigravity_cli", "codex_cli"):
+            result.append({"key": key, "provider": provider_id, "provider_name": prov["name"]})
+            continue
+        api_key = get_key(provider_id)
+        if api_key:
+            result.append({"key": key, "provider": provider_id, "provider_name": prov["name"]})
+    return result
+
+# ── 接入方管理 ──────────────────────────────────
+@router.get("/api/providers")
+async def list_providers():
+    result = []
+    for p in PROVIDERS:
+        has_key = False
+        if p.get("key_field"):
+            has_key = bool(SETTINGS.get(p["key_field"], ""))
+        result.append({
+            "id": p["id"],
+            "name": p["name"],
+            "base_url": p.get("base_url", ""),
+            "type": p["type"],
+            "key_field": p.get("key_field", ""),
+            "has_key": has_key
+        })
+    return result
+
+class ProviderKeyUpdate(BaseModel):
+    key: str
+
+@router.put("/api/providers/{provider_id}/key")
+async def update_provider_key(provider_id: str, body: ProviderKeyUpdate):
+    prov = get_provider(provider_id)
+    if not prov:
+        return Response(content=json.dumps({"error": f"未知接入方: {provider_id}"}), status_code=404, media_type="application/json")
+    key_field = prov.get("key_field", "")
+    if not key_field:
+        return Response(content=json.dumps({"error": f"接入方 {provider_id} 不需要 API Key"}), status_code=400, media_type="application/json")
+    SETTINGS[key_field] = body.key
+    save_settings(SETTINGS)
+    return {"ok": True}
+
+# ── 模型管理 ──────────────────────────────────────
+class ModelCreate(BaseModel):
+    key: str
+    provider: str
+    model: str
+    vision: bool = False
+
+@router.post("/api/models")
+async def create_model(body: ModelCreate):
+    if body.key in MODELS:
+        return Response(content=json.dumps({"error": f"模型名 {body.key} 已存在"}), status_code=400, media_type="application/json")
+    MODELS[body.key] = {"provider": body.provider, "model": body.model, "vision": body.vision}
+    _save_models(MODELS)
+    return {"ok": True}
+
+class ModelUpdate(BaseModel):
+    provider: str | None = None
+    model: str | None = None
+    vision: bool | None = None
+
+@router.put("/api/models/{model_key}")
+async def update_model(model_key: str, body: ModelUpdate):
+    if model_key not in MODELS:
+        return Response(content=json.dumps({"error": f"模型 {model_key} 不存在"}), status_code=404, media_type="application/json")
+    if body.provider is not None:
+        MODELS[model_key]["provider"] = body.provider
+    if body.model is not None:
+        MODELS[model_key]["model"] = body.model
+    if body.vision is not None:
+        MODELS[model_key]["vision"] = body.vision
+    _save_models(MODELS)
+    return {"ok": True}
+
+@router.delete("/api/models/{model_key}")
+async def delete_model(model_key: str):
+    if model_key not in MODELS:
+        return Response(content=json.dumps({"error": f"模型 {model_key} 不存在"}), status_code=404, media_type="application/json")
+    del MODELS[model_key]
+    _save_models(MODELS)
+    return {"ok": True}
 
 # ── 设置 ──────────────────────────────────────────
 class SettingsUpdate(BaseModel):
@@ -34,6 +125,7 @@ class SettingsUpdate(BaseModel):
     embedding_base_url: Optional[str] = None
     embedding_api_key: Optional[str] = None
     embedding_model: Optional[str] = None
+    openrouter_key: Optional[str] = None
     luckin_mcp_enabled: Optional[bool] = None
     luckin_mcp_token: Optional[str] = None
     luckin_default_longitude: Optional[str] = None
@@ -70,6 +162,8 @@ async def get_settings():
         "netease_music_u_masked": mask(SETTINGS.get("netease_music_u", "")),
         "sentinel_api_key_masked": mask(SETTINGS.get("sentinel_api_key", "")),
         "embedding_api_key_masked": mask(SETTINGS.get("embedding_api_key", "")),
+        "openrouter_key": SETTINGS.get("openrouter_key", ""),
+        "openrouter_key_masked": mask(SETTINGS.get("openrouter_key", "")),
     }
 
 @router.put("/api/settings")
@@ -83,6 +177,8 @@ async def update_settings(body: SettingsUpdate):
         SETTINGS["gemini_free_key"] = body.gemini_free_key
     if body.aipro_key is not None:
         SETTINGS["aipro_key"] = body.aipro_key
+    if body.openrouter_key is not None:
+        SETTINGS["openrouter_key"] = body.openrouter_key
     if body.sentinel_base_url is not None:
         SETTINGS["sentinel_base_url"] = body.sentinel_base_url
     if body.sentinel_api_key is not None:

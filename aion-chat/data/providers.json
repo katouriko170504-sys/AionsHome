@@ -1,0 +1,51 @@
+[
+  {
+    "id": "siliconflow",
+    "name": "硅基流动",
+    "base_url": "https://api.siliconflow.cn/v1",
+    "type": "openai_compatible",
+    "key_field": "siliconflow_key"
+  },
+  {
+    "id": "openrouter",
+    "name": "OpenRouter",
+    "base_url": "https://openrouter.ai/api/v1",
+    "type": "openai_compatible",
+    "key_field": "openrouter_key"
+  },
+  {
+    "id": "aipro",
+    "name": "AiPro (DeepSeek中转)",
+    "base_url": "https://api.deepseek.com/v1",
+    "type": "openai_compatible",
+    "key_field": "aipro_key"
+  },
+  {
+    "id": "gemini",
+    "name": "Google Gemini",
+    "base_url": "",
+    "type": "gemini",
+    "key_field": "gemini_key"
+  },
+  {
+    "id": "gemini_cli",
+    "name": "Gemini CLI",
+    "base_url": "",
+    "type": "gemini_cli",
+    "key_field": ""
+  },
+  {
+    "id": "antigravity_cli",
+    "name": "Antigravity CLI",
+    "base_url": "",
+    "type": "antigravity_cli",
+    "key_field": ""
+  },
+  {
+    "id": "codex_cli",
+    "name": "Codex CLI",
+    "base_url": "",
+    "type": "codex_cli",
+    "key_field": ""
+  }
+]
