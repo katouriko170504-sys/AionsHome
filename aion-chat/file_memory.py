@@ -34,7 +34,7 @@ def get_core_memory_files() -> list[str]:
             return list(_DEFAULT_CORE_FILES)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     _MEMORY_CONFIG_PATH.write_text(
-        json.dumps({"core_files": _DEFAULT_CORE_FILES}, ensure_ascii=False, indent=2),
+        json.dumps({"core_files": _DEFAULT_CORE_FILES, "compress_model": ""}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     return list(_DEFAULT_CORE_FILES)

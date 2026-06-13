@@ -570,13 +570,22 @@ async def fetch_merged_timeline(
 
         # ── 私聊消息 ──
         if who == "aion":
-            cur = await db.execute(
-                "SELECT role AS sender, content, created_at, attachments "
-                "FROM messages "
-                "WHERE role IN ('user','assistant','system') "
-                "ORDER BY created_at DESC LIMIT ?",
-                (limit,),
-            )
+            if conv_id:
+                cur = await db.execute(
+                    "SELECT role AS sender, content, created_at, attachments "
+                    "FROM messages "
+                    "WHERE conv_id = ? AND role IN ('user','assistant','system') "
+                    "ORDER BY created_at DESC LIMIT ?",
+                    (conv_id, limit),
+                )
+            else:
+                cur = await db.execute(
+                    "SELECT role AS sender, content, created_at, attachments "
+                    "FROM messages "
+                    "WHERE role IN ('user','assistant','system') "
+                    "ORDER BY created_at DESC LIMIT ?",
+                    (limit,),
+                )
             for r in await cur.fetchall():
                 d = dict(r)
                 d["source"] = "private"

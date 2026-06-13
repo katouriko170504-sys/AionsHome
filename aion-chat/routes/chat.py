@@ -59,6 +59,90 @@ from luckin import (
     query_luckin_order_detail,
 )
 
+_SUMMARIES_PATH = Path(__file__).parent.parent / "data" / "summaries.json"
+
+
+def _load_summaries() -> dict:
+    if _SUMMARIES_PATH.exists():
+        try:
+            return json.loads(_SUMMARIES_PATH.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return {}
+
+
+def _save_summaries(data: dict):
+    _SUMMARIES_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+async def _call_compress_model(prompt: str) -> str:
+    from config import DEFAULT_MODEL
+    try:
+        from file_memory import _MEMORY_CONFIG_PATH
+        cfg = json.loads(_MEMORY_CONFIG_PATH.read_text(encoding="utf-8")) if _MEMORY_CONFIG_PATH.exists() else {}
+    except Exception:
+        cfg = {}
+    model_key = cfg.get("compress_model", "").strip() or DEFAULT_MODEL
+
+    chunks = []
+    async for chunk in stream_ai(
+        model_key=model_key,
+        history=[{"role": "user", "content": prompt}],
+        system_prompt=None,
+        temperature=0.3,
+        max_tokens=1024,
+    ):
+        if chunk.startswith(CLI_STATUS_PREFIX):
+            continue
+        chunks.append(chunk)
+    return "".join(chunks).strip()
+
+
+async def _compress_context(conv_id: str, messages: list, ctx_limit: int) -> tuple[list, str]:
+    """压缩超出 ctx_limit 的旧消息为摘要。
+
+    Returns:
+        (trimmed_messages, summary_text)
+        trimmed_messages: 最近 ctx_limit 条消息
+        summary_text: 被压缩消息的摘要（可能包含之前的摘要）
+    """
+    if len(messages) <= ctx_limit:
+        old_summary = _load_summaries().get(conv_id, {}).get("summary", "")
+        return messages, old_summary
+
+    to_compress = messages[:-ctx_limit]
+    keep = messages[-ctx_limit:]
+
+    sums = _load_summaries()
+    prev = sums.get(conv_id, {})
+    prev_summary = prev.get("summary", "")
+    prev_count = prev.get("compressed_msg_count", 0)
+
+    lines = []
+    for m in to_compress:
+        role = "用户" if m.get("role") == "user" or m.get("sender") == "user" else "AI"
+        content = (m.get("content") or "")[:300]
+        lines.append(f"{role}: {content}")
+    conversation_block = "\n".join(lines)
+
+    prompt_parts = ["请将以下对话片段压缩为简洁的中文摘要，保留关键信息、情感脉络和重要事件："]
+    if prev_summary:
+        prompt_parts.append(f"\n之前的摘要：\n{prev_summary}")
+    prompt_parts.append(f"\n新增对话：\n{conversation_block}")
+    prompt_parts.append("\n请输出合并后的摘要，不超过500字。")
+
+    summary = await _call_compress_model("\n".join(prompt_parts))
+
+    sums[conv_id] = {
+        "summary": summary,
+        "compressed_msg_count": prev_count + len(to_compress),
+        "updated_at": time.time(),
+    }
+    _save_summaries(sums)
+    print(f"[compress] 压缩了 {len(to_compress)} 条消息，摘要 {len(summary)} 字")
+
+    return keep, summary
+
 
 def _process_voice_attachments_in_history(history: list, keep_idx: int = -1):
     """处理历史消息中的语音/视频附件：
@@ -778,9 +862,26 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
         conv = await cur.fetchone()
         model_key = conv["model"] if conv else DEFAULT_MODEL
 
-    # ── 合并私聊 + 群聊消息为统一时间线 ──
-    merged = await fetch_merged_timeline("aion", body.context_limit, conv_id=conv_id)
+    # ── 合并私聊 + 群聊消息为统一时间线（压缩感知） ──
+    _ctx_summary = ""
+    try:
+        from file_memory import PERSONA_DIR as _PD, MEMORY_DIR as _MD
+        _fm_active = _PD.exists() or _MD.exists()
+    except ImportError:
+        _fm_active = False
+    if _fm_active:
+        merged = await fetch_merged_timeline("aion", 30, conv_id=conv_id)
+        try:
+            merged, _ctx_summary = await _compress_context(conv_id, merged, body.context_limit)
+        except Exception as _ce:
+            print(f"[compress] 压缩失败: {_ce}")
+            merged = merged[-body.context_limit:]
+    else:
+        merged = await fetch_merged_timeline("aion", body.context_limit, conv_id=conv_id)
     history = render_merged_timeline(merged, "aion")
+    if _ctx_summary:
+        history.insert(0, {"role": "user", "content": f"[之前的对话摘要]\n{_ctx_summary}"})
+        history.insert(1, {"role": "assistant", "content": "我记得这些。"})
 
     # 只保留最后一条用户消息的图片附件 + 语音消息处理
     _process_voice_attachments_in_history(history)
@@ -1338,9 +1439,26 @@ async def send_message(conv_id: str, body: MsgCreate):
         conv = await cur.fetchone()
         model_key = conv["model"] if conv else DEFAULT_MODEL
 
-    # ── 合并私聊 + 群聊消息为统一时间线 ──
-    merged = await fetch_merged_timeline("aion", body.context_limit, conv_id=conv_id)
+    # ── 合并私聊 + 群聊消息为统一时间线（压缩感知） ──
+    _ctx_summary = ""
+    try:
+        from file_memory import PERSONA_DIR as _PD, MEMORY_DIR as _MD
+        _fm_active = _PD.exists() or _MD.exists()
+    except ImportError:
+        _fm_active = False
+    if _fm_active:
+        merged = await fetch_merged_timeline("aion", 30, conv_id=conv_id)
+        try:
+            merged, _ctx_summary = await _compress_context(conv_id, merged, body.context_limit)
+        except Exception as _ce:
+            print(f"[compress] 压缩失败: {_ce}")
+            merged = merged[-body.context_limit:]
+    else:
+        merged = await fetch_merged_timeline("aion", body.context_limit, conv_id=conv_id)
     history = render_merged_timeline(merged, "aion")
+    if _ctx_summary:
+        history.insert(0, {"role": "user", "content": f"[之前的对话摘要]\n{_ctx_summary}"})
+        history.insert(1, {"role": "assistant", "content": "我记得这些。"})
 
     # 只保留当前（最后一条）用户消息的图片附件，历史图片不带入上下文
     # 语音消息处理：历史语音消息用转写文本替代音频文件，当前消息保留音频原件
@@ -2396,9 +2514,26 @@ async def regenerate_message(conv_id: str, context_limit: int = 5, whisper_mode:
         conv = await cur.fetchone()
         model_key = conv["model"] if conv else DEFAULT_MODEL
 
-    # ── 合并私聊 + 群聊消息为统一时间线 ──
-    merged = await fetch_merged_timeline("aion", context_limit, conv_id=conv_id)
+    # ── 合并私聊 + 群聊消息为统一时间线（压缩感知） ──
+    _ctx_summary = ""
+    try:
+        from file_memory import PERSONA_DIR as _PD, MEMORY_DIR as _MD
+        _fm_active = _PD.exists() or _MD.exists()
+    except ImportError:
+        _fm_active = False
+    if _fm_active:
+        merged = await fetch_merged_timeline("aion", 30, conv_id=conv_id)
+        try:
+            merged, _ctx_summary = await _compress_context(conv_id, merged, context_limit)
+        except Exception as _ce:
+            print(f"[compress] 压缩失败: {_ce}")
+            merged = merged[-context_limit:]
+    else:
+        merged = await fetch_merged_timeline("aion", context_limit, conv_id=conv_id)
     history = render_merged_timeline(merged, "aion")
+    if _ctx_summary:
+        history.insert(0, {"role": "user", "content": f"[之前的对话摘要]\n{_ctx_summary}"})
+        history.insert(1, {"role": "assistant", "content": "我记得这些。"})
 
     # 只保留最后一条用户消息的图片附件 + 语音消息处理（与 send_message 一致）
     last_user_idx = -1
