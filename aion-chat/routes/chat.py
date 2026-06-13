@@ -553,6 +553,7 @@ class MsgCreate(BaseModel):
     tts_voice: str = ""
     client_id: str = ""
     theater_session_id: str = ""
+    thinking_enabled: bool = True
 
 class MsgUpdate(BaseModel):
     content: str
@@ -570,6 +571,7 @@ class MsgEditResend(BaseModel):
     tts_enabled: bool = False
     tts_voice: str = ""
     client_id: str = ""
+    thinking_enabled: bool = True
 
 # ── 对话 CRUD ─────────────────────────────────────
 @router.get("/api/conversations")
@@ -1088,6 +1090,7 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
     async def _bg_generate():
         full_text = ""
         thinking_text = ""
+        _think = body.thinking_enabled
         has_error = False
         try:
             await _q.put({"id": ai_msg_id, "type": "start"})
@@ -1098,8 +1101,9 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
                         continue
                     if chunk.startswith(THINKING_PREFIX):
                         t = chunk[len(THINKING_PREFIX):]
-                        thinking_text += t
-                        await _q.put({"type": "thinking", "content": t})
+                        if _think:
+                            thinking_text += t
+                            await _q.put({"type": "thinking", "content": t})
                         continue
                     full_text += chunk
                     if _provider == "antigravity_cli":
@@ -1744,6 +1748,7 @@ async def send_message(conv_id: str, body: MsgCreate):
         """后台任务：AI 流式生成 → 后处理 → 存 DB → WS 广播。始终运行到结束。"""
         full_text = ""
         thinking_text = ""
+        _think = body.thinking_enabled
         has_error = False
         try:
             await _q.put({"id": ai_msg_id, "type": "start"})
@@ -1754,8 +1759,9 @@ async def send_message(conv_id: str, body: MsgCreate):
                         continue
                     if chunk.startswith(THINKING_PREFIX):
                         t = chunk[len(THINKING_PREFIX):]
-                        thinking_text += t
-                        await _q.put({"type": "thinking", "content": t})
+                        if _think:
+                            thinking_text += t
+                            await _q.put({"type": "thinking", "content": t})
                         continue
                     full_text += chunk
                     if _provider == "antigravity_cli":
@@ -2528,7 +2534,7 @@ async def perform_activity_check(conv_id: str, model_key: str, n: int = 6):
 
 # ── 重新生成 AI 回复 ──────────────────────────────
 @router.post("/api/conversations/{conv_id}/regenerate")
-async def regenerate_message(conv_id: str, context_limit: int = 5, whisper_mode: bool = False, fast_mode: bool = False, temperature: Optional[float] = None, max_tokens: Optional[int] = None, tts_enabled: bool = False, tts_voice: str = ""):
+async def regenerate_message(conv_id: str, context_limit: int = 5, whisper_mode: bool = False, fast_mode: bool = False, temperature: Optional[float] = None, max_tokens: Optional[int] = None, tts_enabled: bool = False, tts_voice: str = "", thinking_enabled: bool = True):
     async with get_db() as db:
         db.row_factory = __import__('aiosqlite').Row
         cur = await db.execute("SELECT model FROM conversations WHERE id=?", (conv_id,))
@@ -2796,8 +2802,9 @@ async def regenerate_message(conv_id: str, context_limit: int = 5, whisper_mode:
                         continue
                     if chunk.startswith(THINKING_PREFIX):
                         t = chunk[len(THINKING_PREFIX):]
-                        thinking_text += t
-                        await _q.put({"type": "thinking", "content": t})
+                        if thinking_enabled:
+                            thinking_text += t
+                            await _q.put({"type": "thinking", "content": t})
                         continue
                     full_text += chunk
                     if _provider == "antigravity_cli":

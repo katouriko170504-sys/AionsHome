@@ -19,7 +19,7 @@ router = APIRouter()
 # ── 模型列表 ──────────────────────────────────────
 @router.get("/api/models")
 async def list_models():
-    return [{"key": k, "provider": v["provider"], "model": v.get("model", ""), "vision": v.get("vision", False)} for k, v in MODELS.items()]
+    return [{"key": k, "provider": v["provider"], "model": v.get("model", ""), "vision": v.get("vision", False), "thinking": v.get("thinking", False)} for k, v in MODELS.items()]
 
 # ── 可用模型（只返回已配 key 的接入方下的模型）──
 @router.get("/api/available-models")
@@ -77,12 +77,13 @@ class ModelCreate(BaseModel):
     provider: str
     model: str
     vision: bool = False
+    thinking: bool = False
 
 @router.post("/api/models")
 async def create_model(body: ModelCreate):
     if body.key in MODELS:
         return Response(content=json.dumps({"error": f"模型名 {body.key} 已存在"}), status_code=400, media_type="application/json")
-    MODELS[body.key] = {"provider": body.provider, "model": body.model, "vision": body.vision}
+    MODELS[body.key] = {"provider": body.provider, "model": body.model, "vision": body.vision, "thinking": body.thinking}
     _save_models(MODELS)
     return {"ok": True}
 
@@ -90,6 +91,7 @@ class ModelUpdate(BaseModel):
     provider: str | None = None
     model: str | None = None
     vision: bool | None = None
+    thinking: bool | None = None
 
 @router.put("/api/models/{model_key}")
 async def update_model(model_key: str, body: ModelUpdate):
@@ -101,6 +103,8 @@ async def update_model(model_key: str, body: ModelUpdate):
         MODELS[model_key]["model"] = body.model
     if body.vision is not None:
         MODELS[model_key]["vision"] = body.vision
+    if body.thinking is not None:
+        MODELS[model_key]["thinking"] = body.thinking
     _save_models(MODELS)
     return {"ok": True}
 

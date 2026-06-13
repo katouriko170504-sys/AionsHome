@@ -104,6 +104,9 @@ async function init() {
   // 恢复最大回复长度设置
   const savedMaxTokens = localStorage.getItem('aion_max_tokens');
   if (savedMaxTokens) { $("maxTokensSlider").value = savedMaxTokens; const v = parseInt(savedMaxTokens); $("maxTokensValue").textContent = v === 0 ? '不限' : v; }
+  // 恢复思考模式设置
+  const savedThinking = localStorage.getItem('aion_thinking_enabled');
+  $("thinkingToggle").checked = savedThinking !== 'false';
   connectWS();
   // 滚动到顶部自动加载更早消息
   $("messages").addEventListener("scroll", function() {
@@ -2133,6 +2136,10 @@ async function changeModel() {
   await api("PUT", `/api/conversations/${currentConvId}`, { model: $("modelSelect").value });
 }
 
+function toggleThinkingMode() {
+  localStorage.setItem('aion_thinking_enabled', $("thinkingToggle").checked);
+}
+
 async function renameConv(id) {
   const conv = conversations.find(c => c.id === id);
   if (!conv) return;
@@ -2213,7 +2220,7 @@ async function send() {
     const res = await fetch(`/api/conversations/${currentConvId}/send`, {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ content: text, context_limit: contextLimit, attachments, whisper_mode: whisperMode, temperature, max_tokens: maxTokens, tts_enabled: ttsEnabled, tts_voice: ttsVoiceId, client_id: _clientId }),
+      body: JSON.stringify({ content: text, context_limit: contextLimit, attachments, whisper_mode: whisperMode, temperature, max_tokens: maxTokens, tts_enabled: ttsEnabled, tts_voice: ttsVoiceId, client_id: _clientId, thinking_enabled: $("thinkingToggle").checked }),
       signal: _abortController.signal
     });
 
@@ -2413,7 +2420,7 @@ async function saveEdit(id) {
     const res = await fetch(`/api/messages/${id}/edit-resend`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ content: newText, context_limit: contextLimit, whisper_mode: whisperMode, temperature, max_tokens: maxTokens, tts_enabled: ttsEnabled, tts_voice: ttsVoiceId, client_id: _clientId }),
+      body: JSON.stringify({ content: newText, context_limit: contextLimit, whisper_mode: whisperMode, temperature, max_tokens: maxTokens, tts_enabled: ttsEnabled, tts_voice: ttsVoiceId, client_id: _clientId, thinking_enabled: $("thinkingToggle").checked }),
       signal: _abortController.signal
     });
 
@@ -2577,7 +2584,7 @@ async function regenerateMsg(aiMsgId) {
     const temperature = parseFloat($("tempSlider").value);
     const maxTokens = _getMaxTokens();
     const mtParam = maxTokens ? `&max_tokens=${maxTokens}` : '';
-    const res = await fetch(`/api/conversations/${currentConvId}/regenerate?context_limit=${cl}&whisper_mode=${whisperMode}&temperature=${temperature}${mtParam}&tts_enabled=${ttsEnabled}&tts_voice=${encodeURIComponent(ttsVoiceId)}`, {
+    const res = await fetch(`/api/conversations/${currentConvId}/regenerate?context_limit=${cl}&whisper_mode=${whisperMode}&temperature=${temperature}${mtParam}&tts_enabled=${ttsEnabled}&tts_voice=${encodeURIComponent(ttsVoiceId)}&thinking_enabled=${$("thinkingToggle").checked}`, {
       method: "POST", headers: {"Content-Type": "application/json"},
       signal: _abortController.signal
     });
@@ -3628,7 +3635,7 @@ async function _voiceSendMessage(audioBlob, duration) {
     const res = await fetch(`/api/conversations/${currentConvId}/send`, {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ content: "", context_limit: contextLimit, attachments, whisper_mode: whisperMode, temperature, max_tokens: maxTokens, tts_enabled: ttsEnabled, tts_voice: ttsVoiceId, client_id: _clientId }),
+      body: JSON.stringify({ content: "", context_limit: contextLimit, attachments, whisper_mode: whisperMode, temperature, max_tokens: maxTokens, tts_enabled: ttsEnabled, tts_voice: ttsVoiceId, client_id: _clientId, thinking_enabled: $("thinkingToggle").checked }),
       signal: _abortController.signal
     });
     // 复用和 send() 完全相同的 SSE 处理逻辑
